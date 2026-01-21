@@ -59,9 +59,13 @@ class TestListingPageParser:
         all_rule_ids = parser.extract_rule_ids()
         global_rules = parser.filter_global_rules(all_rule_ids)
 
-        # For now, should return all rules (not yet implemented)
-        # TODO: Update this test when filtering is implemented
+        # Should return fewer rules than the full list (personal rules filtered out)
         assert len(global_rules) > 0
+        assert len(global_rules) < len(all_rule_ids)
+
+        # All returned rules should be in the original list
+        for rule_id in global_rules:
+            assert rule_id in all_rule_ids
 
 
 class TestRuleDetailPageParser:
@@ -336,6 +340,43 @@ class TestParserIntegration:
                 if rule:
                     parsed_rules.append(rule)
 
-        # Should have parsed at least one rule
+        # Should have parsed at least one rule if we have fixtures
         if len(available_fixtures) > 0:
-            assert len(parsed_rules) >= 0  # May be 0 if parsing not yet implemented
+            assert len(parsed_rules) > 0, f"Expected to parse at least one rule, but parsed {len(parsed_rules)} from {len(available_fixtures)} fixtures"
+
+    def test_global_rules_fixture_coverage(self):
+        """Test that global rules from listing have corresponding fixtures.
+
+        This test identifies which global rules are missing fixtures.
+        It's informational - it won't fail if some rules are missing.
+        """
+        listing_path = FIXTURES_DIR / "rules" / "listing.html"
+        if not listing_path.exists():
+            pytest.skip("Listing fixture not found")
+
+        # Get all global rules from the listing
+        listing_parser = ListingPageParser(listing_path.read_text())
+        all_rule_ids = listing_parser.extract_rule_ids()
+        global_rules = listing_parser.filter_global_rules(all_rule_ids)
+
+        # Check which have fixtures
+        rules_dir = FIXTURES_DIR / "rules"
+        available_fixtures = {
+            f.stem.replace("rule_", "")
+            for f in rules_dir.glob("rule_*.html")
+        }
+
+        covered = [r for r in global_rules if r in available_fixtures]
+        missing = [r for r in global_rules if r not in available_fixtures]
+
+        # Report coverage
+        print(f"\nGlobal rules coverage: {len(covered)}/{len(global_rules)}")
+        print(f"Covered: {covered}")
+        print(f"Missing: {missing}")
+
+        # Verify at least some coverage exists
+        assert len(covered) > 0, "No global rules have fixtures"
+
+        # This assertion is intentionally lenient - we know not all rules have fixtures yet
+        # Uncomment the line below when all fixtures are available:
+        # assert len(missing) == 0, f"Missing fixtures for global rules: {missing}"

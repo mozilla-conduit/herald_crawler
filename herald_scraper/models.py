@@ -1,36 +1,8 @@
 """Data models for Herald rules extraction using Pydantic."""
 
+from datetime import datetime
 from typing import List, Dict, Optional, Any
-from enum import Enum
 from pydantic import BaseModel, Field
-
-
-class RuleType(str, Enum):
-    """Types of Herald rules."""
-    DIFFERENTIAL_REVISION = "differential-revision"
-    COMMIT = "commit"
-    TASK = "task"
-    UNKNOWN = "unknown"
-
-
-class RuleStatus(str, Enum):
-    """Status of Herald rules."""
-    ACTIVE = "active"
-    DISABLED = "disabled"
-    ARCHIVED = "archived"
-
-
-class ConditionOperator(str, Enum):
-    """Operators for rule conditions."""
-    MATCHES_REGEXP = "matches-regexp"
-    EQUALS = "equals"
-    NOT_EQUALS = "not-equals"
-    CONTAINS = "contains"
-    NOT_CONTAINS = "not-contains"
-    EXISTS = "exists"
-    NOT_EXISTS = "not-exists"
-    ANY = "any"
-    UNKNOWN = "unknown"
 
 
 class Condition(BaseModel):
@@ -84,7 +56,7 @@ class Group(BaseModel):
 
 class Metadata(BaseModel):
     """Metadata about the extraction."""
-    extracted_at: str
+    extracted_at: datetime
     total_rules: int
     total_groups: int
     phabricator_instance: str

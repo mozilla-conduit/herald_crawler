@@ -1,9 +1,12 @@
 """HTML parsers for Herald rules pages."""
 
+import logging
 import re
 from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup, Tag
 from herald_scraper.models import Rule, Condition, Action, Reviewer
+
+logger = logging.getLogger(__name__)
 
 
 class ListingPageParser:
@@ -36,8 +39,8 @@ class ListingPageParser:
         """
         Filter rule IDs to only include global rules.
 
-        This method would need to fetch or parse additional information
-        to determine which rules are global. For now, returns all rules.
+        Parses the listing page HTML to identify which rules are global
+        by looking for "Global Rule" text in each rule's row.
 
         Args:
             rule_ids: List of rule IDs to filter
@@ -45,9 +48,20 @@ class ListingPageParser:
         Returns:
             Filtered list of global rule IDs
         """
-        # TODO: Implement actual filtering based on rule type in listing
-        # For now, we'll need to check each rule detail page
-        return rule_ids
+        global_rules = []
+
+        for rule_id in rule_ids:
+            # Find the link for this rule
+            for link in self.soup.find_all("a", href=f"/{rule_id}"):
+                # Find the parent frame element
+                frame = link.find_parent("div", class_="phui-oi-frame")
+                if frame:
+                    text = frame.get_text(" ", strip=True)
+                    if "Global Rule" in text:
+                        global_rules.append(rule_id)
+                        break
+
+        return global_rules
 
 
 class RuleDetailPageParser:
@@ -86,13 +100,16 @@ class RuleDetailPageParser:
                 actions=actions
             )
         except Exception as e:
-            # Log error and return None
-            print(f"Error parsing rule: {e}")
+            logger.error(f"Error parsing rule: {e}")
             return None
 
     def is_global_rule(self) -> bool:
         """
         Determine if this rule is a global rule.
+
+        Looks for the 'Rule Type' property in the property list and checks
+        if its value is 'Global'. Returns False if the property is not found
+        or has a different value (e.g., 'Personal', 'Object').
 
         Returns:
             True if the rule is global, False otherwise
@@ -106,11 +123,8 @@ class RuleDetailPageParser:
                     value = dd.get_text(strip=True)
                     return value == "Global"
 
-        # Fallback: check for "Global" text in the page
-        page_text = self.soup.get_text()
-        if "Rule Type" in page_text and "Global" in page_text:
-            return True
-
+        # If we can't find the Rule Type property, log a warning and return False
+        logger.warning("Could not find 'Rule Type' property in page")
         return False
 
     def _extract_rule_id(self) -> str:
@@ -176,31 +190,64 @@ class RuleDetailPageParser:
         return "unknown"
 
     def _extract_status(self) -> str:
-        """Extract rule status (active/disabled)."""
-        # Look for status indicators
-        page_text = self.soup.get_text()
+        """Extract rule status (active/disabled).
 
-        if "Disabled" in page_text or "disabled" in page_text:
-            return "disabled"
+        Looks for the status tag in the page header subheader section,
+        which contains a phui-tag-view span with the status text.
+        """
+        # Look for status in the header subheader section
+        subheader = self.soup.find("div", class_="phui-header-subheader")
+        if subheader:
+            # Status is in a span with phui-tag-view class
+            status_tag = subheader.find("span", class_="phui-tag-view")
+            if status_tag:
+                status_text = status_tag.get_text(strip=True).lower()
+                if "disabled" in status_text:
+                    return "disabled"
+                if "active" in status_text:
+                    return "active"
 
+        # Fallback: assume active if no explicit disabled indicator found
         return "active"
 
     def _extract_rule_type(self) -> str:
-        """Extract rule type (differential-revision, commit, etc.)."""
-        # Look for "Differential Revisions", "Commits", etc.
-        page_text = self.soup.get_text()
+        """Extract rule type (differential-revision, commit, etc.).
 
-        if "Differential Revision" in page_text:
-            return "differential-revision"
-        elif "Commit" in page_text and "Commits" in page_text:
-            return "commit"
+        Looks for the 'Applies To' property in the property list, which
+        indicates what type of objects this rule applies to.
+        """
+        # Look for "Applies To" property key and check the value
+        for dt in self.soup.find_all("dt", class_="phui-property-list-key"):
+            if "Applies To" in dt.get_text(strip=True):
+                dd = dt.find_next_sibling("dd", class_="phui-property-list-value")
+                if dd:
+                    value = dd.get_text(strip=True).lower()
+                    if "differential" in value:
+                        return "differential-revision"
+                    elif "commit" in value:
+                        return "commit"
+                    elif "task" in value:
+                        return "task"
 
         return "unknown"
 
     def _extract_repository(self) -> Optional[str]:
-        """Extract repository filter if present."""
-        # Look for repository conditions
-        # TODO: Implement based on actual HTML structure
+        """Extract repository filter if present.
+
+        Returns the repository name if there's exactly one repository condition.
+        Returns None if there are no repository conditions or multiple repositories
+        (in which case, the full list is available in the conditions).
+        """
+        conditions = self._extract_conditions()
+        repo_conditions = [c for c in conditions if c.type == "repository"]
+
+        if len(repo_conditions) == 1:
+            value = repo_conditions[0].value
+            if isinstance(value, list) and len(value) == 1:
+                return value[0]
+            elif isinstance(value, str):
+                return value
+
         return None
 
     def _extract_conditions(self) -> List[Condition]:

@@ -3,6 +3,8 @@
 import pytest
 from pydantic import ValidationError
 
+from datetime import datetime, timezone
+
 from herald_scraper.models import (
     Condition,
     Reviewer,
@@ -11,9 +13,6 @@ from herald_scraper.models import (
     Group,
     Metadata,
     HeraldRulesOutput,
-    RuleType,
-    RuleStatus,
-    ConditionOperator,
 )
 
 
@@ -319,7 +318,7 @@ class TestMetadata:
             total_groups=5,
             phabricator_instance="phabricator.services.mozilla.com"
         )
-        assert metadata.extracted_at == "2026-01-21T12:00:00Z"
+        assert metadata.extracted_at == datetime(2026, 1, 21, 12, 0, 0, tzinfo=timezone.utc)
         assert metadata.total_rules == 123
         assert metadata.total_groups == 5
         assert metadata.phabricator_instance == "phabricator.services.mozilla.com"
@@ -333,7 +332,7 @@ class TestMetadata:
             phabricator_instance="phabricator.services.mozilla.com"
         )
         data = metadata.model_dump()
-        assert data["extracted_at"] == "2026-01-21T12:00:00Z"
+        assert data["extracted_at"] == datetime(2026, 1, 21, 12, 0, 0, tzinfo=timezone.utc)
         assert data["total_rules"] == 123
 
 
