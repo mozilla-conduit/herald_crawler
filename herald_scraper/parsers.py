@@ -1,5 +1,6 @@
 """HTML parsers for Herald rules pages."""
 
+import re
 from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup, Tag
 from herald_scraper.models import Rule, Condition, Action, Reviewer
@@ -96,16 +97,20 @@ class RuleDetailPageParser:
         Returns:
             True if the rule is global, False otherwise
         """
-        # Look for rule type indicator in the page
-        # Global rules are indicated by specific text or CSS classes
-        page_text = self.soup.get_text()
+        # Look for "Rule Type" property key and check if value is "Global"
+        for dt in self.soup.find_all("dt", class_="phui-property-list-key"):
+            if "Rule Type" in dt.get_text(strip=True):
+                # Find the corresponding dd value
+                dd = dt.find_next_sibling("dd", class_="phui-property-list-value")
+                if dd:
+                    value = dd.get_text(strip=True)
+                    return value == "Global"
 
-        # Check for "Global Rule" text
-        if "Global Rule" in page_text:
+        # Fallback: check for "Global" text in the page
+        page_text = self.soup.get_text()
+        if "Rule Type" in page_text and "Global" in page_text:
             return True
 
-        # Check for rule type in metadata
-        # TODO: Implement more robust detection
         return False
 
     def _extract_rule_id(self) -> str:
@@ -146,9 +151,29 @@ class RuleDetailPageParser:
 
     def _extract_author(self) -> str:
         """Extract rule author from the page."""
-        # Look for author information in metadata section
-        # TODO: Implement based on actual HTML structure
-        return "unknown@mozilla.com"
+        # Look for "created this object" in the timeline
+        # The author is typically the first person who created the rule
+        timeline = self.soup.find("div", class_="phui-timeline-view")
+        if timeline:
+            # Find the text that says "created this object"
+            for title_div in timeline.find_all("div", class_="phui-timeline-title"):
+                text = title_div.get_text(strip=True)
+                if "created this object" in text:
+                    # Find the person link in this div
+                    person_link = title_div.find("a", class_="phui-link-person")
+                    if person_link:
+                        return person_link.get_text(strip=True)
+
+        # Fallback: look for any user link that created the object
+        for link in self.soup.find_all("a", class_="phui-link-person"):
+            parent_text = ""
+            parent = link.find_parent("div", class_="phui-timeline-title")
+            if parent:
+                parent_text = parent.get_text(strip=True)
+            if "created" in parent_text:
+                return link.get_text(strip=True)
+
+        return "unknown"
 
     def _extract_status(self) -> str:
         """Extract rule status (active/disabled)."""
@@ -180,23 +205,184 @@ class RuleDetailPageParser:
 
     def _extract_conditions(self) -> List[Condition]:
         """Extract all conditions from the rule."""
-        conditions = []
+        conditions: List[Condition] = []
 
-        # Look for conditions section
-        # Typically marked by "When all of these conditions are met:" or similar
-        # TODO: Implement based on actual HTML structure
+        # Find the conditions header
+        conditions_header = None
+        for p in self.soup.find_all("p", class_="herald-list-description"):
+            text = p.get_text(strip=True)
+            if "When all of these conditions are met" in text:
+                conditions_header = p
+                break
+
+        if not conditions_header:
+            return conditions
+
+        # Iterate through siblings until we hit the actions header
+        for sibling in conditions_header.find_next_siblings():
+            # Stop if we reach the actions section
+            if sibling.name == "p" and "herald-list-description" in sibling.get("class", []):
+                break
+
+            # Process herald-list-item divs
+            if sibling.name == "div" and "herald-list-item" in sibling.get("class", []):
+                condition = self._parse_condition_item(sibling)
+                if condition:
+                    conditions.append(condition)
 
         return conditions
 
+    def _parse_condition_item(self, item: Tag) -> Optional[Condition]:
+        """Parse a single condition item div."""
+        text = item.get_text(strip=True)
+
+        # Repository condition
+        if text.startswith("Repository is any of"):
+            repos = self._extract_handle_names(item)
+            return Condition(
+                type="repository",
+                operator="is-any-of",
+                value=repos
+            )
+
+        # Revision status condition
+        if "Revision status is not any of" in text:
+            # Extract status values after "is not any of"
+            match = re.search(r"is not any of\s+(.+)$", text)
+            if match:
+                statuses = [s.strip() for s in match.group(1).split(",")]
+                return Condition(
+                    type="differential-revision-status",
+                    operator="is-not-any-of",
+                    value=statuses
+                )
+
+        # Affected files matches regexp
+        if "Affected files matches regexp" in text or "Affected files match regexp" in text:
+            # Extract regexp pattern between @ delimiters
+            pattern = self._extract_regexp_pattern(text)
+            if pattern:
+                return Condition(
+                    type="differential-diff-content",
+                    operator="matches-regexp",
+                    value=pattern
+                )
+
+        # Reviewers exists condition
+        if "Reviewers exists" in text:
+            return Condition(
+                type="differential-reviewers",
+                operator="exists",
+                value=True
+            )
+
+        # Reviewers does not exist
+        if "Reviewers does not exist" in text:
+            return Condition(
+                type="differential-reviewers",
+                operator="not-exists",
+                value=True
+            )
+
+        # Generic fallback - log unknown condition types
+        return Condition(
+            type="unknown",
+            operator="unknown",
+            value=text
+        )
+
+    def _extract_handle_names(self, element: Tag) -> List[str]:
+        """Extract names from phui-handle links within an element."""
+        names: List[str] = []
+        for link in element.find_all("a", class_="phui-handle"):
+            # Get the text of the link (e.g., "rMOZILLACENTRAL mozilla-central")
+            link_text = link.get_text(strip=True)
+            # For repository links, extract just the readable name
+            # Format is "rSHORTNAME readable-name"
+            if " " in link_text:
+                names.append(link_text.split(" ", 1)[1])
+            else:
+                names.append(link_text)
+        return names
+
+    def _extract_regexp_pattern(self, text: str) -> Optional[str]:
+        """Extract regexp pattern from condition text (between @ delimiters)."""
+        # Pattern is enclosed in @ symbols
+        match = re.search(r"@(.+)@", text)
+        if match:
+            return match.group(1)
+        return None
+
     def _extract_actions(self) -> List[Action]:
         """Extract all actions from the rule."""
-        actions = []
+        actions: List[Action] = []
 
-        # Look for actions section
-        # Typically marked by "Take these actions:" or similar
-        # TODO: Implement based on actual HTML structure
+        # Find the actions header
+        actions_header = None
+        for p in self.soup.find_all("p", class_="herald-list-description"):
+            text = p.get_text(strip=True)
+            if "Take these actions" in text:
+                actions_header = p
+                break
+
+        if not actions_header:
+            return actions
+
+        # Iterate through siblings after the actions header
+        for sibling in actions_header.find_next_siblings():
+            # Stop if we reach another section (unlikely, but defensive)
+            if sibling.name == "p" and "herald-list-description" in sibling.get("class", []):
+                break
+
+            # Process herald-list-item divs
+            if sibling.name == "div" and "herald-list-item" in sibling.get("class", []):
+                action = self._parse_action_item(sibling)
+                if action:
+                    actions.append(action)
 
         return actions
+
+    def _parse_action_item(self, item: Tag) -> Optional[Action]:
+        """Parse a single action item div."""
+        text = item.get_text(strip=True)
+
+        # Add blocking reviewers
+        if "Add blocking reviewers:" in text:
+            reviewer_names = self._extract_handle_names(item)
+            reviewers = [
+                Reviewer(target=name, blocking=True)
+                for name in reviewer_names
+            ]
+            return Action(
+                type="add-reviewers",
+                reviewers=reviewers
+            )
+
+        # Add (non-blocking) reviewers
+        if text.startswith("Add reviewers:") and "blocking" not in text.lower():
+            reviewer_names = self._extract_handle_names(item)
+            reviewers = [
+                Reviewer(target=name, blocking=False)
+                for name in reviewer_names
+            ]
+            return Action(
+                type="add-reviewers",
+                reviewers=reviewers
+            )
+
+        # Add subscribers
+        if "Add subscribers:" in text:
+            subscriber_names = self._extract_handle_names(item)
+            return Action(
+                type="add-subscribers",
+                targets=subscriber_names
+            )
+
+        # Generic fallback
+        return Action(
+            type="unknown",
+            targets=[text]
+        )
 
 
 class ProjectPageParser:
