@@ -5,15 +5,26 @@ Fetch Herald rule pages from Phabricator for use as test fixtures.
 This script requires authentication via session cookie.
 
 Usage:
-    # Using session cookie
+    # Set session cookie
     export PHAB_SESSION_COOKIE="your-phsid-cookie-value"
+
+    # Fetch default examples (4 rules)
     python scripts/fetch_fixtures.py
+
+    # Fetch recommended diverse set (8 rules)
+    python scripts/fetch_fixtures.py --recommended
 
     # Fetch specific rule IDs
     python scripts/fetch_fixtures.py --rules H416 H417 H420
 
-    # Fetch all rules from listing
-    python scripts/fetch_fixtures.py --all
+    # Fetch all rules from listing (limited to first 10)
+    python scripts/fetch_fixtures.py --all --max-rules 10
+
+    # Fetch project/group pages
+    python scripts/fetch_fixtures.py --projects firefox-reviewers devtools
+
+    # Combine options
+    python scripts/fetch_fixtures.py --rules H417 H420 --projects firefox-reviewers
 """
 
 import argparse
@@ -126,6 +137,16 @@ def main():
         default=1.0,
         help="Delay between requests in seconds (default: 1.0)"
     )
+    parser.add_argument(
+        "--projects",
+        nargs="+",
+        help="Project/group slugs to fetch (e.g., firefox-build-system-reviewers)"
+    )
+    parser.add_argument(
+        "--recommended",
+        action="store_true",
+        help="Fetch the recommended diverse set of rules from analysis"
+    )
 
     args = parser.parse_args()
 
@@ -153,7 +174,14 @@ def main():
 
         # Determine which rules to fetch
         rule_ids = []
-        if args.all:
+        if args.recommended:
+            # Fetch recommended diverse set based on analysis
+            all_rule_ids = fetcher.extract_rule_ids_from_listing(listing_html)
+            total = len(all_rule_ids)
+            sample_indices = [0, 5, 15, total // 3, total // 2, 2 * total // 3, total - 10, total - 1]
+            rule_ids = [all_rule_ids[i] for i in sample_indices if i < total]
+            print(f"\n=== Fetching recommended diverse set: {', '.join(rule_ids)} ===")
+        elif args.all:
             print("\n=== Extracting rule IDs from listing ===")
             all_rule_ids = fetcher.extract_rule_ids_from_listing(listing_html)
             print(f"Found {len(all_rule_ids)} rule IDs: {', '.join(all_rule_ids[:20])}")
@@ -163,7 +191,7 @@ def main():
             rule_ids = args.rules
         else:
             # Default: fetch a few example rules
-            rule_ids = ["H416", "H417", "H420", "H425"]
+            rule_ids = ["H417", "H422", "H432", "H450"]
             print(f"\n=== Fetching default example rules: {', '.join(rule_ids)} ===")
 
         # Fetch individual rule pages
@@ -177,8 +205,24 @@ def main():
                 print(f"ERROR fetching {rule_id}: {e}")
                 continue
 
+        # Fetch project/group pages if requested
+        if args.projects:
+            print(f"\n=== Fetching {len(args.projects)} project/group pages ===")
+            for project_slug in args.projects:
+                try:
+                    project_html = fetcher.fetch_project(project_slug)
+                    save_file(project_html, FIXTURES_DIR / "groups" / f"{project_slug}.html")
+                    time.sleep(args.delay)
+                except Exception as e:
+                    print(f"ERROR fetching project {project_slug}: {e}")
+                    continue
+
         print("\n=== Done! ===")
         print(f"Fixtures saved to: {FIXTURES_DIR}")
+        print(f"\nSummary:")
+        print(f"  - Rules fetched: {len(rule_ids)}")
+        if args.projects:
+            print(f"  - Projects fetched: {len(args.projects)}")
 
     except Exception as e:
         print(f"\nERROR: {e}")
