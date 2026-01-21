@@ -38,6 +38,13 @@ herald-scraper \
 
 ## Development
 
+### Setup
+
+```bash
+# Install package with dev dependencies
+pip install -e ".[dev]"
+```
+
 ### Running Tests
 
 ```bash
@@ -153,6 +160,49 @@ The output JSON structure includes:
 - GitHub info for rule authors, reviewers, and group members is looked up via `github_users` (avoids duplication)
 - `groups.members` is a simple list of usernames; GitHub info is in `github_users`
 - `scrape_status` in metadata enables resumable scraping
+
+## Scripts
+
+The `scripts/` directory contains utility scripts for development and testing:
+
+### Fixture Collection
+
+- **`fetch_fixtures.py`**: Fetch Herald rule pages from Phabricator for test fixtures
+  - Requires authentication via `PHAB_SESSION_COOKIE` environment variable
+  - Can fetch specific rules, all rules, or recommended diverse set
+  - Usage: `python scripts/fetch_fixtures.py --rules H420 H422 H425`
+
+### Analysis Scripts
+
+- **`analyze_listing.py`**: Analyze the Herald rules listing page (BeautifulSoup-based)
+  - Extracts rule IDs and metadata from listing HTML
+  - Identifies PHIDs and project references
+  - Suggests diverse rules to fetch for testing
+  - Usage: `python scripts/analyze_listing.py`
+
+- **`analyze_listing_simple.py`**: Simplified listing analysis (regex-based)
+  - Faster analysis using regular expressions
+  - Provides recommendations for diverse test fixtures
+  - Shows PHID types and project references
+  - Usage: `python scripts/analyze_listing_simple.py`
+
+- **`inspect_fixtures.py`**: Inspect structure of saved rule fixtures
+  - Shows rule IDs, titles, breadcrumbs
+  - Identifies rule types (Global, Personal, Object)
+  - Helps understand HTML structure for parser development
+  - Usage: `python scripts/inspect_fixtures.py`
+
+- **`extract_conditions_actions.py`**: Extract conditions and actions text
+  - Parses rule fixtures and extracts raw text sections
+  - Shows natural language structure of conditions and actions
+  - Useful for understanding parser requirements
+  - Usage: `python scripts/extract_conditions_actions.py`
+
+- **`analyze_html_structure.py`**: Detailed HTML structure analysis
+  - Examines HTML elements and their relationships
+  - Extracts regexp patterns and reviewer names
+  - Helps with parser implementation
+  - Usage: `python scripts/analyze_html_structure.py`
 
 ## License
 

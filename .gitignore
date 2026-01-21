@@ -1,2 +1,13 @@
 mise.toml
 *.egg-info
+.coverage
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg
+.mypy_cache/
+.ruff_cache/
