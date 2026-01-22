@@ -513,12 +513,14 @@ class ProjectPageParser:
                             return href[5:-1]
 
         # Fallback: extract from page title (format: "project-name · Manage")
+        logger.debug("No 'Looks Like' tag link found, falling back to title")
         title = self.soup.find("title")
         if title:
             title_text = title.get_text(strip=True)
             if " · " in title_text:
                 return title_text.split(" · ")[0]
 
+        logger.debug("Could not extract project slug, returning default")
         return "unknown-project"
 
     def _extract_project_name(self) -> str:
@@ -532,10 +534,12 @@ class ProjectPageParser:
             return title_text
 
         # Fallback: try breadcrumbs
+        logger.debug("No title found, falling back to breadcrumbs")
         breadcrumbs = self.soup.find_all("span", class_="phui-crumb-name")
         if len(breadcrumbs) >= 2:
             return breadcrumbs[-2].get_text(strip=True).strip()
 
+        logger.debug("Could not extract project name, returning default")
         return "Unknown Project"
 
     def _extract_members(self) -> List[str]:
@@ -548,6 +552,7 @@ class ProjectPageParser:
 
         timeline = self.soup.find("div", class_="phui-timeline-view")
         if not timeline:
+            logger.debug("No timeline found, returning empty members list")
             return []
 
         for title_div in timeline.find_all("div", class_="phui-timeline-title"):
@@ -557,11 +562,14 @@ class ProjectPageParser:
                 member = self._extract_member_from_event(title_div)
                 if member:
                     members.add(member)
+                    logger.debug(f"Added member: {member}")
             elif "removed a member:" in text:
                 member = self._extract_member_from_event(title_div)
                 if member:
                     members.discard(member)
+                    logger.debug(f"Removed member: {member}")
 
+        logger.debug(f"Extracted {len(members)} members from timeline")
         return sorted(members)
 
     def _extract_member_from_event(self, element: Tag) -> Optional[str]:
