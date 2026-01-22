@@ -82,8 +82,11 @@ class PhabricatorFetcher:
         return self.fetch_page(url)
 
     def fetch_project(self, project_slug: str) -> str:
-        """Fetch a project/group page."""
-        url = f"{self.base_url}/project/profile/{project_slug}/"
+        """Fetch a project/group page.
+
+        Uses /tag/{slug}/ URL which is the pattern used in Herald rule links.
+        """
+        url = f"{self.base_url}/tag/{project_slug}/"
         return self.fetch_page(url)
 
     def extract_rule_ids_from_listing(self, html: str) -> List[str]:
