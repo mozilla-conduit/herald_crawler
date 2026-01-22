@@ -355,6 +355,118 @@ class TestProjectPageParser:
         assert "members" in info
         assert isinstance(info["members"], list)
 
+    @pytest.mark.parametrize("fixture_file,expected", [
+        ("omc-reviewers.html", {
+            "slug": "omc-reviewers",
+            "display_name": "omc-reviewers",
+            "expected_members": ["aminomancer", "lsmith", "mviar", "sachung"],
+        }),
+        ("android-reviewers.html", {
+            "slug": "android-reviewers",
+            "display_name": "android-reviewers",
+            "min_members": 1,  # At least one member expected
+        }),
+        ("sidebar-reviewers-rotation.html", {
+            "slug": "sidebar-reviewers-rotation",
+            "display_name": "sidebar-reviewers-rotation",
+            "min_members": 1,
+        }),
+        ("geckoview-api-reviewers.html", {
+            "slug": "geckoview-api-reviewers",
+            "display_name": "geckoview-api-reviewers",
+            "min_members": 1,
+        }),
+        ("geckodriver-reviewers.html", {
+            "slug": "geckodriver-reviewers",
+            "display_name": "geckodriver-reviewers",
+            "min_members": 1,
+        }),
+    ])
+    def test_parse_project_fixture(self, fixture_file, expected):
+        """Test parsing specific project fixtures with expected values."""
+        fixture_path = FIXTURES_DIR / "groups" / fixture_file
+        if not fixture_path.exists():
+            pytest.skip(f"Fixture {fixture_file} not found")
+
+        html = fixture_path.read_text()
+        parser = ProjectPageParser(html)
+        info = parser.extract_project_info()
+
+        # Check slug
+        assert info["id"] == expected["slug"], \
+            f"Slug mismatch: got '{info['id']}', expected '{expected['slug']}'"
+
+        # Check display name
+        assert info["display_name"] == expected["display_name"], \
+            f"Display name mismatch: got '{info['display_name']}', expected '{expected['display_name']}'"
+
+        # Check members
+        assert isinstance(info["members"], list), "Members should be a list"
+
+        if "expected_members" in expected:
+            # Check exact member list (sorted for comparison)
+            assert sorted(info["members"]) == sorted(expected["expected_members"]), \
+                f"Members mismatch: got {sorted(info['members'])}, expected {sorted(expected['expected_members'])}"
+        elif "min_members" in expected:
+            # Check minimum member count
+            assert len(info["members"]) >= expected["min_members"], \
+                f"Expected at least {expected['min_members']} members, got {len(info['members'])}"
+
+    def test_extract_slug_from_tag_link(self):
+        """Test extracting project slug from tag link in 'Looks Like' section."""
+        fixture_path = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        if not fixture_path.exists():
+            pytest.skip("omc-reviewers fixture not found")
+
+        html = fixture_path.read_text()
+        parser = ProjectPageParser(html)
+
+        slug = parser._extract_project_slug()
+        assert slug == "omc-reviewers"
+
+    def test_extract_display_name_from_title(self):
+        """Test extracting display name from page title."""
+        fixture_path = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        if not fixture_path.exists():
+            pytest.skip("omc-reviewers fixture not found")
+
+        html = fixture_path.read_text()
+        parser = ProjectPageParser(html)
+
+        name = parser._extract_project_name()
+        assert name == "omc-reviewers"
+
+    def test_extract_members_from_timeline(self):
+        """Test extracting current members by parsing timeline events."""
+        fixture_path = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        if not fixture_path.exists():
+            pytest.skip("omc-reviewers fixture not found")
+
+        html = fixture_path.read_text()
+        parser = ProjectPageParser(html)
+
+        members = parser._extract_members()
+
+        # Based on timeline analysis of omc-reviewers fixture:
+        # - Created by zeid_admin
+        # - beth removed herself
+        # - aminomancer added yozhang, then removed yozhang
+        # - aminomancer added lsmith
+        # - hanna_a added mviar
+        # - mviar added sachung
+        # - aminomancer removed pdahiya and Mardak
+        # Current members should be: aminomancer, lsmith, mviar, sachung
+        assert isinstance(members, list)
+        assert "aminomancer" in members
+        assert "lsmith" in members
+        assert "mviar" in members
+        assert "sachung" in members
+        # These should NOT be in members (removed)
+        assert "beth" not in members
+        assert "yozhang" not in members
+        assert "pdahiya" not in members
+        assert "Mardak" not in members
+
 
 class TestParserIntegration:
     """Integration tests using fixtures."""
