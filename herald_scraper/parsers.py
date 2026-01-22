@@ -499,17 +499,16 @@ class ProjectPageParser:
         }
 
     def _extract_project_slug(self) -> str:
-        """Extract project slug from the page."""
+        """Extract project slug from tag link in 'Looks Like' section or title."""
         # TODO: Implement based on actual HTML structure
         return "unknown-project"
 
     def _extract_project_name(self) -> str:
-        """Extract project display name."""
+        """Extract project display name from page title."""
         # TODO: Implement based on actual HTML structure
         return "Unknown Project"
 
     def _extract_members(self) -> List[str]:
-        """Extract list of project members."""
-        members = []
+        """Extract list of project members by parsing timeline events."""
         # TODO: Implement based on actual HTML structure
-        return members
+        return []

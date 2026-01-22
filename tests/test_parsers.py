@@ -359,27 +359,32 @@ class TestProjectPageParser:
         ("omc-reviewers.html", {
             "slug": "omc-reviewers",
             "display_name": "omc-reviewers",
+            # Full timeline available - exact member verification
             "expected_members": ["aminomancer", "lsmith", "mviar", "sachung"],
         }),
         ("android-reviewers.html", {
             "slug": "android-reviewers",
             "display_name": "android-reviewers",
-            "min_members": 1,  # At least one member expected
+            # Large group with many members - verify minimum
+            "min_members": 30,
         }),
         ("sidebar-reviewers-rotation.html", {
             "slug": "sidebar-reviewers-rotation",
             "display_name": "sidebar-reviewers-rotation",
-            "min_members": 1,
+            # Timeline only shows removals, not initial members
+            "min_members": 0,
         }),
         ("geckoview-api-reviewers.html", {
             "slug": "geckoview-api-reviewers",
             "display_name": "geckoview-api-reviewers",
-            "min_members": 1,
+            # Only one addition visible in timeline
+            "expected_members": ["tcampbell"],
         }),
         ("geckodriver-reviewers.html", {
             "slug": "geckodriver-reviewers",
             "display_name": "geckodriver-reviewers",
-            "min_members": 1,
+            # No member events in timeline - empty is acceptable
+            "min_members": 0,
         }),
     ])
     def test_parse_project_fixture(self, fixture_file, expected):
@@ -466,6 +471,52 @@ class TestProjectPageParser:
         assert "yozhang" not in members
         assert "pdahiya" not in members
         assert "Mardak" not in members
+
+    def test_extract_slug_minimal_html(self):
+        """Test slug extraction with minimal HTML containing just title."""
+        html = '<html><head><title>my-project · Manage</title></head><body></body></html>'
+        parser = ProjectPageParser(html)
+        assert parser._extract_project_slug() == "my-project"
+
+    def test_extract_name_minimal_html(self):
+        """Test name extraction with minimal HTML containing just title."""
+        html = '<html><head><title>my-project · Manage</title></head><body></body></html>'
+        parser = ProjectPageParser(html)
+        assert parser._extract_project_name() == "my-project"
+
+    def test_extract_members_no_timeline(self):
+        """Test member extraction when no timeline exists."""
+        html = '<html><body><div>No timeline here</div></body></html>'
+        parser = ProjectPageParser(html)
+        members = parser._extract_members()
+        assert members == []
+
+    def test_extract_members_empty_timeline(self):
+        """Test member extraction with empty timeline (no member events)."""
+        html = '''
+        <html><body>
+            <div class="phui-timeline-view">
+                <div class="phui-timeline-title">
+                    <a href="/p/user1/" class="phui-link-person">user1</a>
+                    created this project.
+                </div>
+            </div>
+        </body></html>
+        '''
+        parser = ProjectPageParser(html)
+        members = parser._extract_members()
+        assert members == []
+
+    def test_extract_info_malformed_html(self):
+        """Test extraction with minimal/malformed HTML returns defaults."""
+        html = '<html><body></body></html>'
+        parser = ProjectPageParser(html)
+        info = parser.extract_project_info()
+
+        # Should return defaults without crashing
+        assert info["id"] == "unknown-project"
+        assert info["display_name"] == "Unknown Project"
+        assert info["members"] == []
 
 
 class TestParserIntegration:
