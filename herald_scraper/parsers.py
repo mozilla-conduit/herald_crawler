@@ -63,6 +63,47 @@ class ListingPageParser:
 
         return global_rules
 
+    def has_next_page(self) -> bool:
+        """
+        Check if there is a next page of results.
+
+        Phabricator uses cursor-based pagination with a pager containing
+        a "Next" link when more results are available.
+
+        Returns:
+            True if a next page exists, False otherwise
+        """
+        pager = self.soup.find("div", class_="phui-pager-view")
+        if not pager:
+            return False
+
+        # Look for a link with "Next" text or after= parameter
+        for link in pager.find_all("a", href=True):
+            href = link.get("href", "")
+            if "after=" in href:
+                return True
+
+        return False
+
+    def get_next_page_url(self) -> Optional[str]:
+        """
+        Extract the URL for the next page of results.
+
+        Returns:
+            The URL for the next page, or None if no next page exists
+        """
+        pager = self.soup.find("div", class_="phui-pager-view")
+        if not pager:
+            return None
+
+        # Look for a link with after= parameter (Phabricator's cursor pagination)
+        for link in pager.find_all("a", href=True):
+            href = link.get("href", "")
+            if "after=" in href:
+                return href
+
+        return None
+
 
 class RuleDetailPageParser:
     """Parser for individual Herald rule detail page."""

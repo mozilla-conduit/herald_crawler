@@ -67,6 +67,54 @@ class TestListingPageParser:
         for rule_id in global_rules:
             assert rule_id in all_rule_ids
 
+    def test_has_next_page_with_pagination(self, parser):
+        """Test that has_next_page returns True when pagination exists."""
+        # The listing fixture has pagination with after=417
+        assert parser.has_next_page() is True
+
+    def test_get_next_page_url_with_pagination(self, parser):
+        """Test extracting next page URL when pagination exists."""
+        next_url = parser.get_next_page_url()
+
+        assert next_url is not None
+        assert "after=" in next_url
+        assert next_url == "/herald/query/all/?after=417"
+
+    def test_has_next_page_no_pagination(self):
+        """Test that has_next_page returns False when no pagination."""
+        # Create a minimal HTML without pager
+        html = """
+        <html><body>
+            <a href="/H100">H100</a>
+            <a href="/H101">H101</a>
+        </body></html>
+        """
+        parser = ListingPageParser(html)
+        assert parser.has_next_page() is False
+
+    def test_get_next_page_url_no_pagination(self):
+        """Test that get_next_page_url returns None when no pagination."""
+        html = """
+        <html><body>
+            <a href="/H100">H100</a>
+        </body></html>
+        """
+        parser = ListingPageParser(html)
+        assert parser.get_next_page_url() is None
+
+    def test_has_next_page_last_page(self):
+        """Test has_next_page returns False on last page (pager without after link)."""
+        # Pager exists but only has a "Previous" link (before= parameter)
+        html = """
+        <html><body>
+            <div class="phui-pager-view">
+                <a href="/herald/query/all/?before=100">Previous</a>
+            </div>
+        </body></html>
+        """
+        parser = ListingPageParser(html)
+        assert parser.has_next_page() is False
+
 
 class TestRuleDetailPageParser:
     """Tests for RuleDetailPageParser."""

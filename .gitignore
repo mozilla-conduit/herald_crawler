@@ -11,3 +11,4 @@ build/
 *.egg
 .mypy_cache/
 .ruff_cache/
+herald_rules.json
