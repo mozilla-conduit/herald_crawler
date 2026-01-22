@@ -500,15 +500,77 @@ class ProjectPageParser:
 
     def _extract_project_slug(self) -> str:
         """Extract project slug from tag link in 'Looks Like' section or title."""
-        # TODO: Implement based on actual HTML structure
+        # Try to find slug from tag link in "Looks Like" property
+        for dt in self.soup.find_all("dt", class_="phui-property-list-key"):
+            if "Looks Like" in dt.get_text(strip=True):
+                dd = dt.find_next_sibling("dd", class_="phui-property-list-value")
+                if dd:
+                    tag_link = dd.find("a", href=True)
+                    if tag_link:
+                        href = tag_link.get("href", "")
+                        # Extract slug from /tag/{slug}/ pattern
+                        if href.startswith("/tag/") and href.endswith("/"):
+                            return href[5:-1]
+
+        # Fallback: extract from page title (format: "project-name · Manage")
+        title = self.soup.find("title")
+        if title:
+            title_text = title.get_text(strip=True)
+            if " · " in title_text:
+                return title_text.split(" · ")[0]
+
         return "unknown-project"
 
     def _extract_project_name(self) -> str:
         """Extract project display name from page title."""
-        # TODO: Implement based on actual HTML structure
+        title = self.soup.find("title")
+        if title:
+            title_text = title.get_text(strip=True)
+            # Title format: "project-name · Manage" or similar
+            if " · " in title_text:
+                return title_text.split(" · ")[0]
+            return title_text
+
+        # Fallback: try breadcrumbs
+        breadcrumbs = self.soup.find_all("span", class_="phui-crumb-name")
+        if len(breadcrumbs) >= 2:
+            return breadcrumbs[-2].get_text(strip=True).strip()
+
         return "Unknown Project"
 
     def _extract_members(self) -> List[str]:
-        """Extract list of project members by parsing timeline events."""
-        # TODO: Implement based on actual HTML structure
-        return []
+        """Extract list of project members by parsing timeline events.
+
+        Processes "added a member" and "removed a member" events chronologically
+        to compute the current membership list.
+        """
+        members: set[str] = set()
+
+        timeline = self.soup.find("div", class_="phui-timeline-view")
+        if not timeline:
+            return []
+
+        for title_div in timeline.find_all("div", class_="phui-timeline-title"):
+            text = title_div.get_text(" ", strip=True)
+
+            if "added a member:" in text:
+                member = self._extract_member_from_event(title_div)
+                if member:
+                    members.add(member)
+            elif "removed a member:" in text:
+                member = self._extract_member_from_event(title_div)
+                if member:
+                    members.discard(member)
+
+        return sorted(members)
+
+    def _extract_member_from_event(self, element: Tag) -> Optional[str]:
+        """Extract the member username from an add/remove event.
+
+        The event contains two person links: the actor and the target.
+        The target (member being added/removed) is the second link.
+        """
+        person_links = element.find_all("a", class_="phui-link-person")
+        if len(person_links) >= 2:
+            return person_links[1].get_text(strip=True)
+        return None
