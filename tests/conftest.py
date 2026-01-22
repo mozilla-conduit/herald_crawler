@@ -28,9 +28,19 @@ def load_fixture() -> Callable[[str], str]:
 
         Returns:
             Content of the fixture file
+
+        Raises:
+            FileNotFoundError: If fixture file doesn't exist, with helpful message
         """
         fixture_path = FIXTURES_DIR / filename
-        return fixture_path.read_text(encoding="utf-8")
+        try:
+            return fixture_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Fixture file not found: {fixture_path}\n"
+                f"Expected fixture at: {fixture_path.absolute()}\n"
+                f"Make sure you've run: python scripts/fetch_fixtures.py"
+            ) from None
 
     return _load_fixture
 

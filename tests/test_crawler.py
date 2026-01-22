@@ -121,6 +121,7 @@ class TestExtractAllRules:
     ) -> None:
         """Test extracting all rules with complete output."""
         mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
         mock_client.fetch_listing.return_value = listing_html
         mock_client.fetch_rule.side_effect = [rule_h420_html, rule_h422_html]
 
@@ -139,6 +140,7 @@ class TestExtractAllRules:
     ) -> None:
         """Test extracting only global rules."""
         mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
         mock_client.fetch_listing.return_value = listing_html
         mock_client.fetch_rule.return_value = rule_h420_html
 
@@ -157,6 +159,7 @@ class TestExtractAllRules:
     ) -> None:
         """Test that progress callback is called during extraction."""
         mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
         mock_client.fetch_listing.return_value = listing_html
         mock_client.fetch_rule.side_effect = [rule_h420_html, rule_h422_html]
 
@@ -178,6 +181,7 @@ class TestExtractAllRules:
     ) -> None:
         """Test that max_rules parameter limits extraction."""
         mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
         mock_client.fetch_listing.return_value = listing_html
         mock_client.fetch_rule.return_value = rule_h420_html
 

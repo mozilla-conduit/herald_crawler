@@ -68,6 +68,35 @@ class TestHeraldClientInit:
             assert client.delay == 1.0
             assert client.user_agent == "HeraldScraper/0.1"
 
+    def test_init_invalid_url_raises_error(self) -> None:
+        """Test that invalid URL raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid base_url"):
+            HeraldClient(base_url="not-a-valid-url")
+
+    def test_init_empty_url_raises_error(self) -> None:
+        """Test that empty URL raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid base_url"):
+            HeraldClient(base_url="")
+
+    def test_from_environment_missing_url_raises_error(self) -> None:
+        """Test that missing PHABRICATOR_URL raises ValueError."""
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ValueError, match="PHABRICATOR_URL environment variable is required"):
+                HeraldClient.from_environment()
+
+    def test_from_environment_invalid_delay_raises_error(self) -> None:
+        """Test that invalid HERALD_SCRAPER_DELAY raises ValueError."""
+        with patch.dict(
+            os.environ,
+            {
+                "PHABRICATOR_URL": "https://phabricator.env.com",
+                "HERALD_SCRAPER_DELAY": "not-a-number",
+            },
+            clear=True,
+        ):
+            with pytest.raises(ValueError, match="HERALD_SCRAPER_DELAY must be a number"):
+                HeraldClient.from_environment()
+
 
 class TestHeraldClientFetch:
     """Tests for HeraldClient fetch methods."""
