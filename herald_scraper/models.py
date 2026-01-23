@@ -41,7 +41,6 @@ class Rule(BaseModel):
     type: str
     conditions: List[Condition] = Field(default_factory=list)
     actions: List[Action] = Field(default_factory=list)
-    repository: Optional[str] = None
 
     model_config = {"extra": "forbid"}
 

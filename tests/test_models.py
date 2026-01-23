@@ -186,7 +186,6 @@ class TestRule:
         assert rule.type == "differential-revision"
         assert rule.conditions == []
         assert rule.actions == []
-        assert rule.repository is None
 
     def test_create_complete_rule(self):
         """Test creating a complete rule with all fields."""
@@ -196,7 +195,6 @@ class TestRule:
             author="user@example.com",
             status="active",
             type="differential-revision",
-            repository="mozilla-central",
             conditions=[
                 Condition(
                     type="differential-diff-content",
@@ -213,7 +211,6 @@ class TestRule:
                 )
             ]
         )
-        assert rule.repository == "mozilla-central"
         assert len(rule.conditions) == 1
         assert len(rule.actions) == 1
 
@@ -255,7 +252,6 @@ class TestRule:
             "author": "user@example.com",
             "status": "active",
             "type": "differential-revision",
-            "repository": "mozilla-central",
             "conditions": [
                 {
                     "type": "differential-diff-content",
@@ -274,7 +270,6 @@ class TestRule:
         }
         rule = Rule(**data)
         assert rule.id == "H123"
-        assert rule.repository == "mozilla-central"
         assert len(rule.conditions) == 1
         assert len(rule.actions) == 1
 
@@ -404,7 +399,6 @@ class TestHeraldRulesOutput:
                     author="user@example.com",
                     status="active",
                     type="differential-revision",
-                    repository="mozilla-central",
                     conditions=[
                         Condition(
                             type="differential-diff-content",
@@ -520,8 +514,7 @@ class TestHeraldRulesOutput:
                     "status": "active",
                     "type": "differential-revision",
                     "conditions": [],
-                    "actions": [],
-                    "repository": None
+                    "actions": []
                 }
             ],
             "groups": {

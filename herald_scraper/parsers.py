@@ -126,7 +126,6 @@ class RuleDetailPageParser:
             author = self._extract_author()
             status = self._extract_status()
             rule_type = self._extract_rule_type()
-            repository = self._extract_repository()
             conditions = self._extract_conditions()
             actions = self._extract_actions()
 
@@ -136,7 +135,6 @@ class RuleDetailPageParser:
                 author=author,
                 status=status,
                 type=rule_type,
-                repository=repository,
                 conditions=conditions,
                 actions=actions
             )
@@ -271,25 +269,6 @@ class RuleDetailPageParser:
                         return "task"
 
         return "unknown"
-
-    def _extract_repository(self) -> Optional[str]:
-        """Extract repository filter if present.
-
-        Returns the repository name if there's exactly one repository condition.
-        Returns None if there are no repository conditions or multiple repositories
-        (in which case, the full list is available in the conditions).
-        """
-        conditions = self._extract_conditions()
-        repo_conditions = [c for c in conditions if c.type == "repository"]
-
-        if len(repo_conditions) == 1:
-            value = repo_conditions[0].value
-            if isinstance(value, list) and len(value) == 1:
-                return value[0]
-            elif isinstance(value, str):
-                return value
-
-        return None
 
     def _extract_conditions(self) -> List[Condition]:
         """Extract all conditions from the rule."""
