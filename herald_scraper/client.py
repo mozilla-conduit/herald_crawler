@@ -50,7 +50,19 @@ class HeraldClient:
         self._session = requests.Session()
         self._session.headers["User-Agent"] = user_agent
         if session_cookie:
-            self._session.cookies.set("phsid", session_cookie.replace("phsid=", ""))
+            # Extract domain from base_url for cookie
+            # e.g., "phabricator.services.mozilla.com" -> ".services.mozilla.com"
+            netloc = parsed.netloc
+            if "." in netloc:
+                # Use parent domain to allow cookie to work with subdomains
+                cookie_domain = "." + netloc.split(".", 1)[1]
+            else:
+                cookie_domain = netloc
+            self._session.cookies.set(
+                "phsid",
+                session_cookie.replace("phsid=", ""),
+                domain=cookie_domain,
+            )
 
     def _rate_limit(self) -> None:
         """Apply rate limiting between requests."""
@@ -97,10 +109,13 @@ class HeraldClient:
         """
         Fetch the Herald rules listing page.
 
+        Uses the explicit "all" query to avoid user's saved query preference
+        (authenticated users may default to "Authored" or other filtered views).
+
         Returns:
             HTML content of the listing page
         """
-        return self.fetch_page("/herald/")
+        return self.fetch_page("/herald/query/all/")
 
     def fetch_rule(self, rule_id: str) -> str:
         """

@@ -26,6 +26,36 @@ class TestHeraldClientInit:
         assert client.delay == 0.5
         assert client.user_agent == "TestAgent/1.0"
 
+    def test_init_cookie_domain_extracted_from_url(self) -> None:
+        """Test that session cookie is set with correct domain from base_url."""
+        client = HeraldClient(
+            base_url="https://phabricator.services.mozilla.com",
+            session_cookie="abc123",
+        )
+        # Cookie should be set with parent domain
+        cookie = client._session.cookies.get("phsid", domain=".services.mozilla.com")
+        assert cookie == "abc123"
+
+    def test_init_cookie_domain_with_subdomain(self) -> None:
+        """Test cookie domain extraction for multi-level subdomains."""
+        client = HeraldClient(
+            base_url="https://phab.dev.example.org",
+            session_cookie="xyz789",
+        )
+        # Cookie should use parent domain .dev.example.org
+        cookie = client._session.cookies.get("phsid", domain=".dev.example.org")
+        assert cookie == "xyz789"
+
+    def test_init_cookie_domain_simple_domain(self) -> None:
+        """Test cookie domain extraction for simple domain (no subdomain)."""
+        client = HeraldClient(
+            base_url="https://localhost",
+            session_cookie="local123",
+        )
+        # For simple domains, use the domain as-is
+        cookie = client._session.cookies.get("phsid", domain="localhost")
+        assert cookie == "local123"
+
     def test_init_without_session_cookie(self) -> None:
         """Test initialization without a session cookie."""
         client = HeraldClient(
@@ -165,7 +195,7 @@ class TestHeraldClientFetch:
         """Test fetching the Herald listing page."""
         responses.add(
             responses.GET,
-            "https://phabricator.example.com/herald/",
+            "https://phabricator.example.com/herald/query/all/",
             body=listing_html,
             status=200,
         )
@@ -174,7 +204,7 @@ class TestHeraldClientFetch:
         html = client.fetch_listing()
 
         assert html == listing_html
-        assert "/herald/" in responses.calls[0].request.url
+        assert "/herald/query/all/" in responses.calls[0].request.url
 
     @responses.activate
     def test_fetch_rule(self, rule_h420_html: str) -> None:
