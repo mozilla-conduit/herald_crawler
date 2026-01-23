@@ -227,11 +227,15 @@ class TestGroupCollectorIntegration:
 
     @pytest.fixture
     def group_fixtures(self):
-        """Get all available group fixtures."""
+        """Get all available group fixtures (excluding members pages)."""
         groups_dir = FIXTURES_DIR / "groups"
         if not groups_dir.exists():
             pytest.skip("Groups fixtures directory not found")
-        return {f.stem: f for f in groups_dir.glob("*.html")}
+        # Exclude members page fixtures (*-members.html)
+        return {
+            f.stem: f for f in groups_dir.glob("*.html")
+            if not f.stem.endswith("-members")
+        }
 
     def test_collect_groups_with_fixtures(self, group_fixtures):
         """Test collecting groups using real fixture files."""

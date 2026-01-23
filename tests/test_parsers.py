@@ -6,7 +6,8 @@ from pathlib import Path
 from herald_scraper.parsers import (
     ListingPageParser,
     RuleDetailPageParser,
-    ProjectPageParser
+    ProjectPageParser,
+    ProjectMembersPageParser,
 )
 
 
@@ -545,6 +546,135 @@ class TestProjectPageParser:
         assert info["id"] == "unknown-project"
         assert info["display_name"] == "Unknown Project"
         assert info["members"] == []
+
+
+class TestProjectMembersPageParser:
+    """Tests for ProjectMembersPageParser (members page parsing)."""
+
+    @pytest.fixture
+    def members_fixtures(self):
+        """Get all members page fixture files."""
+        groups_dir = FIXTURES_DIR / "groups"
+        if not groups_dir.exists():
+            pytest.skip("Project fixtures not found")
+        return {f.stem.replace("-members", ""): f for f in groups_dir.glob("*-members.html")}
+
+    # Expected members for each group fixture (sorted alphabetically)
+    EXPECTED_MEMBERS = {
+        "omc-reviewers": [
+            "aminomancer", "dmose", "emcminn", "hanna_a", "jprickett",
+            "lsmith", "mimi", "mviar", "sachung"
+        ],
+        "geckodriver-reviewers": ["Sasha", "jgraham", "whimboo"],
+        "sidebar-reviewers-rotation": [
+            "jsudiaman", "kcochrane", "nsharpley", "sclements", "sfoster"
+        ],
+        "geckoview-api-reviewers": [
+            "bclark", "botond", "calu", "hiro", "m_kato", "nalexander",
+            "nika", "ohall", "owlish", "pollymce", "tcampbell", "tthibaud"
+        ],
+        "android-reviewers": [
+            "007", "RJ", "Roger", "adhingra", "anpopa", "apindiprolu",
+            "avirvara", "azinovyev", "boek", "calu", "devota", "fmasalha",
+            "giorga", "gl", "gmalekpour", "harrisono", "jdelorenzo",
+            "joberhauser", "jonalmeida", "kaya", "lmccracken", "marcin",
+            "matt-tighe", "mavduevskiy", "mcarare", "moyin", "nalexander",
+            "npoon", "ohall", "owlish", "petru", "pollymce",
+            "rebecatudor273", "rsainani", "sfamisa", "skhan", "tcampbell",
+            "tchoh", "tjorjani", "tthibaud", "twhite", "vdreghici"
+        ],
+    }
+
+    @pytest.mark.parametrize("group_slug,expected_count", [
+        ("omc-reviewers", 9),
+        ("geckodriver-reviewers", 3),
+        ("sidebar-reviewers-rotation", 5),
+        ("geckoview-api-reviewers", 12),
+        ("android-reviewers", 42),
+    ])
+    def test_extract_members_count(self, members_fixtures, group_slug, expected_count):
+        """Test that the correct number of members is extracted."""
+        if group_slug not in members_fixtures:
+            pytest.skip(f"No fixture for {group_slug}")
+
+        html = members_fixtures[group_slug].read_text()
+        parser = ProjectMembersPageParser(html)
+        members = parser.extract_members()
+
+        assert len(members) == expected_count, (
+            f"Expected {expected_count} members for {group_slug}, "
+            f"got {len(members)}"
+        )
+
+    @pytest.mark.parametrize("group_slug", [
+        "omc-reviewers",
+        "geckodriver-reviewers",
+        "sidebar-reviewers-rotation",
+        "geckoview-api-reviewers",
+        "android-reviewers",
+    ])
+    def test_extract_members_exact(self, members_fixtures, group_slug):
+        """Test that the exact expected members are extracted."""
+        if group_slug not in members_fixtures:
+            pytest.skip(f"No fixture for {group_slug}")
+        if group_slug not in self.EXPECTED_MEMBERS:
+            pytest.skip(f"No expected members defined for {group_slug}")
+
+        html = members_fixtures[group_slug].read_text()
+        parser = ProjectMembersPageParser(html)
+        members = parser.extract_members()
+
+        expected = self.EXPECTED_MEMBERS[group_slug]
+        assert members == expected, (
+            f"Member mismatch for {group_slug}.\n"
+            f"Expected: {expected}\n"
+            f"Got: {members}"
+        )
+
+    def test_extract_members_returns_sorted(self, members_fixtures):
+        """Test that members are returned in sorted order."""
+        if "omc-reviewers" not in members_fixtures:
+            pytest.skip("omc-reviewers fixture not found")
+
+        html = members_fixtures["omc-reviewers"].read_text()
+        parser = ProjectMembersPageParser(html)
+        members = parser.extract_members()
+
+        assert members == sorted(members), "Members should be sorted alphabetically"
+
+    def test_extract_members_no_duplicates(self, members_fixtures):
+        """Test that no duplicate members are returned."""
+        if "omc-reviewers" not in members_fixtures:
+            pytest.skip("omc-reviewers fixture not found")
+
+        html = members_fixtures["omc-reviewers"].read_text()
+        parser = ProjectMembersPageParser(html)
+        members = parser.extract_members()
+
+        assert len(members) == len(set(members)), "Members should have no duplicates"
+
+    def test_extract_members_empty_page(self):
+        """Test extraction with empty HTML returns empty list."""
+        html = '<html><body></body></html>'
+        parser = ProjectMembersPageParser(html)
+        members = parser.extract_members()
+        assert members == []
+
+    def test_extract_members_no_member_list(self):
+        """Test extraction when page has no member list."""
+        html = '''
+        <html><body>
+            <div class="phui-header-shell">
+                <h1>Members and Watchers</h1>
+            </div>
+            <div class="phui-info-view phui-info-severity-nodata">
+                This project does not have any members.
+            </div>
+        </body></html>
+        '''
+        parser = ProjectMembersPageParser(html)
+        members = parser.extract_members()
+        assert members == []
 
 
 class TestParserIntegration:

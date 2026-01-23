@@ -625,13 +625,18 @@ class ProjectMembersPageParser:
         """
         members: List[str] = []
 
-        # Look for member cards or list items with person links
-        # The members page typically shows a list of user cards
-        member_links = self.soup.find_all("a", class_="phui-link-person")
+        # Look for member cards with profile links: <a href="/p/{username}/" class="phui-oi-link">
+        # The members page shows a list of user cards in a phui-oi-list-view
+        member_links = self.soup.find_all(
+            "a", class_="phui-oi-link", href=lambda h: h and h.startswith("/p/")
+        )
         for link in member_links:
-            username = link.get_text(strip=True)
-            if username and username not in members:
-                members.append(username)
+            href = link.get("href", "")
+            # Extract username from /p/{username}/
+            if href.startswith("/p/") and href.endswith("/"):
+                username = href[3:-1]  # Remove "/p/" prefix and "/" suffix
+                if username and username not in members:
+                    members.append(username)
 
         logger.debug(f"Extracted {len(members)} members from members page")
         return sorted(members)
