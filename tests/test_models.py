@@ -11,6 +11,7 @@ from herald_scraper.models import (
     Action,
     Rule,
     Group,
+    UnresolvedUser,
     Metadata,
     HeraldRulesOutput,
 )
@@ -102,8 +103,16 @@ class TestReviewer:
         data = reviewer.model_dump()
         assert data == {
             "target": "user@example.com",
-            "blocking": True
+            "blocking": True,
+            "github_username": None,
         }
+
+    def test_reviewer_with_github_username(self):
+        """Test creating a reviewer with GitHub username."""
+        reviewer = Reviewer(target="user@example.com", blocking=True, github_username="octocat")
+        assert reviewer.github_username == "octocat"
+        data = reviewer.model_dump()
+        assert data["github_username"] == "octocat"
 
 
 class TestAction:
@@ -336,6 +345,43 @@ class TestMetadata:
         assert data["total_rules"] == 123
 
 
+class TestUnresolvedUser:
+    """Tests for UnresolvedUser model."""
+
+    def test_create_unresolved_user(self):
+        """Test creating an unresolved user."""
+        user = UnresolvedUser(
+            phabricator_username="alice",
+            reason="not_found",
+            referenced_in=["H420", "H422"]
+        )
+        assert user.phabricator_username == "alice"
+        assert user.reason == "not_found"
+        assert user.referenced_in == ["H420", "H422"]
+
+    def test_unresolved_user_empty_referenced_in(self):
+        """Test that referenced_in defaults to empty list."""
+        user = UnresolvedUser(
+            phabricator_username="bob",
+            reason="no_github_linked"
+        )
+        assert user.referenced_in == []
+
+    def test_unresolved_user_to_dict(self):
+        """Test serialization to dictionary."""
+        user = UnresolvedUser(
+            phabricator_username="charlie",
+            reason="error: timeout",
+            referenced_in=["H483"]
+        )
+        data = user.model_dump()
+        assert data == {
+            "phabricator_username": "charlie",
+            "reason": "error: timeout",
+            "referenced_in": ["H483"]
+        }
+
+
 class TestHeraldRulesOutput:
     """Tests for HeraldRulesOutput model."""
 
@@ -344,6 +390,8 @@ class TestHeraldRulesOutput:
         output = HeraldRulesOutput()
         assert output.rules == []
         assert output.groups == {}
+        assert output.github_usernames == {}
+        assert output.unresolved_users == []
         assert output.metadata is None
 
     def test_create_complete_output(self):
@@ -391,6 +439,42 @@ class TestHeraldRulesOutput:
         assert len(output.rules) == 1
         assert len(output.groups) == 1
         assert output.metadata.total_rules == 1
+
+    def test_create_output_with_github_usernames(self):
+        """Test creating an output with GitHub username mappings."""
+        output = HeraldRulesOutput(
+            rules=[
+                Rule(
+                    id="H123",
+                    name="Test Rule",
+                    author="alice",
+                    status="active",
+                    type="differential-revision",
+                    actions=[
+                        Action(
+                            type="add-reviewers",
+                            reviewers=[
+                                Reviewer(target="bob", blocking=True, github_username="bob-gh")
+                            ]
+                        )
+                    ]
+                )
+            ],
+            github_usernames={
+                "alice": "alice-gh",
+                "bob": "bob-gh"
+            },
+            unresolved_users=[
+                UnresolvedUser(
+                    phabricator_username="charlie",
+                    reason="not_found",
+                    referenced_in=["H123"]
+                )
+            ]
+        )
+        assert output.github_usernames == {"alice": "alice-gh", "bob": "bob-gh"}
+        assert len(output.unresolved_users) == 1
+        assert output.unresolved_users[0].phabricator_username == "charlie"
 
     def test_output_to_dict(self):
         """Test serialization to dictionary."""
