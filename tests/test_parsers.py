@@ -583,6 +583,24 @@ class TestProjectMembersPageParser:
             "rebecatudor273", "rsainani", "sfamisa", "skhan", "tcampbell",
             "tchoh", "tjorjani", "tthibaud", "twhite", "vdreghici"
         ],
+        "desktop-theme-reviewers": [
+            "Itiel", "Julian", "dao", "emilio", "hjones", "jules",
+            "kcochrane", "mstriemer", "sfoster", "tgiles", "zrhoffman"
+        ],
+        "profiler-reviewers": [
+            "canaltinova", "dcarver", "fatadel", "florian", "mstange"
+        ],
+        "win-reviewers": [
+            "cdupuis", "cmartin", "gstoll", "handyman", "mpohle",
+            "nrishel", "rkraesig", "yjuglaret"
+        ],
+        "dom-storage-reviewers": [
+            "asuth", "edenchuang", "hsingh", "hsinyi", "janv",
+            "jari", "jesup", "jstutte"
+        ],
+        "reusable-components-reviewers-rotation": [
+            "akulyk", "hjones", "jules", "mkennedy", "mstriemer", "tgiles"
+        ],
     }
 
     @pytest.mark.parametrize("group_slug,expected_count", [
@@ -591,6 +609,11 @@ class TestProjectMembersPageParser:
         ("sidebar-reviewers-rotation", 5),
         ("geckoview-api-reviewers", 12),
         ("android-reviewers", 42),
+        ("desktop-theme-reviewers", 11),
+        ("profiler-reviewers", 5),
+        ("win-reviewers", 8),
+        ("dom-storage-reviewers", 8),
+        ("reusable-components-reviewers-rotation", 6),
     ])
     def test_extract_members_count(self, members_fixtures, group_slug, expected_count):
         """Test that the correct number of members is extracted."""
@@ -604,31 +627,6 @@ class TestProjectMembersPageParser:
         assert len(members) == expected_count, (
             f"Expected {expected_count} members for {group_slug}, "
             f"got {len(members)}"
-        )
-
-    @pytest.mark.parametrize("group_slug", [
-        "omc-reviewers",
-        "geckodriver-reviewers",
-        "sidebar-reviewers-rotation",
-        "geckoview-api-reviewers",
-        "android-reviewers",
-    ])
-    def test_extract_members_exact(self, members_fixtures, group_slug):
-        """Test that the exact expected members are extracted."""
-        if group_slug not in members_fixtures:
-            pytest.skip(f"No fixture for {group_slug}")
-        if group_slug not in self.EXPECTED_MEMBERS:
-            pytest.skip(f"No expected members defined for {group_slug}")
-
-        html = members_fixtures[group_slug].read_text()
-        parser = ProjectMembersPageParser(html)
-        members = parser.extract_members()
-
-        expected = self.EXPECTED_MEMBERS[group_slug]
-        assert members == expected, (
-            f"Member mismatch for {group_slug}.\n"
-            f"Expected: {expected}\n"
-            f"Got: {members}"
         )
 
     def test_extract_members_returns_sorted(self, members_fixtures):

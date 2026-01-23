@@ -501,25 +501,52 @@ class ProjectPageParser:
         }
 
     def _extract_project_id(self) -> Optional[str]:
-        """Extract numeric project ID from the members link in sidebar.
+        """Extract numeric project ID from various page elements.
 
-        The sidebar contains a link like /project/members/171/ which gives us
-        the numeric ID needed to fetch the members page directly.
+        Tries multiple approaches to find the project ID:
+        1. Members link in sidebar: /project/members/{id}/
+        2. Manage link: /project/manage/{id}/
+        3. Profile link: /project/profile/{id}/
+        4. Subprojects link: /project/subprojects/{id}/
         """
-        # Look for the members link in sidebar: /project/members/{id}/
-        members_link = self.soup.find("a", href=lambda h: h and "/project/members/" in h)
-        if members_link:
-            href = members_link.get("href", "")
-            # Extract ID from /project/members/{id}/ pattern
-            match = re.search(r"/project/members/(\d+)/?", href)
-            if match:
-                return match.group(1)
+        # Patterns to try, in order of preference
+        patterns = [
+            r"/project/members/(\d+)/?",
+            r"/project/manage/(\d+)/?",
+            r"/project/profile/(\d+)/?",
+            r"/project/subprojects/(\d+)/?",
+        ]
 
-        logger.debug("Could not extract project ID from members link")
+        # Find all links that might contain project ID
+        for pattern in patterns:
+            for link in self.soup.find_all("a", href=True):
+                href = link.get("href", "")
+                match = re.search(pattern, href)
+                if match:
+                    project_id = match.group(1)
+                    logger.debug(f"Found project ID {project_id} via pattern {pattern}")
+                    return project_id
+
+        # Log what links we did find for debugging
+        project_links = [
+            a.get("href") for a in self.soup.find_all("a", href=True)
+            if a.get("href", "").startswith("/project/")
+        ]
+        if project_links:
+            logger.debug(f"Found project links but no ID: {project_links[:5]}")
+        else:
+            logger.debug("No /project/ links found on page")
+
         return None
 
     def _extract_project_slug(self) -> str:
-        """Extract project slug from tag link in 'Looks Like' section or title."""
+        """Extract project slug from various page elements.
+
+        Tries multiple approaches:
+        1. 'Looks Like' property with tag link
+        2. Tag link in breadcrumbs or sidebar
+        3. Page title (format: "project-name · Manage")
+        """
         # Try to find slug from tag link in "Looks Like" property
         for dt in self.soup.find_all("dt", class_="phui-property-list-key"):
             if "Looks Like" in dt.get_text(strip=True):
@@ -530,15 +557,29 @@ class ProjectPageParser:
                         href = tag_link.get("href", "")
                         # Extract slug from /tag/{slug}/ pattern
                         if href.startswith("/tag/") and href.endswith("/"):
-                            return href[5:-1]
+                            slug = href[5:-1]
+                            logger.debug(f"Found slug '{slug}' from 'Looks Like' property")
+                            return slug
+
+        # Try to find tag link anywhere on the page
+        for link in self.soup.find_all("a", href=True):
+            href = link.get("href", "")
+            if href.startswith("/tag/") and href.endswith("/"):
+                slug = href[5:-1]
+                # Skip generic tags that aren't project names
+                if slug and not slug.startswith("_"):
+                    logger.debug(f"Found slug '{slug}' from tag link")
+                    return slug
 
         # Fallback: extract from page title (format: "project-name · Manage")
-        logger.debug("No 'Looks Like' tag link found, falling back to title")
+        logger.debug("No tag link found, falling back to title")
         title = self.soup.find("title")
         if title:
             title_text = title.get_text(strip=True)
             if " · " in title_text:
-                return title_text.split(" · ")[0]
+                slug = title_text.split(" · ")[0]
+                logger.debug(f"Extracted slug '{slug}' from title")
+                return slug
 
         logger.debug("Could not extract project slug, returning default")
         return "unknown-project"

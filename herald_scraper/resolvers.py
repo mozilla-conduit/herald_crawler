@@ -74,8 +74,17 @@ class GroupCollector:
 
             # First fetch project page to get project_id and basic info
             project_html = self.client.fetch_project(slug)
+            logger.debug(f"Fetched project page for {slug}: {len(project_html)} bytes")
+
             project_parser = ProjectPageParser(project_html)
             project_info = project_parser.extract_project_info()
+            logger.debug(
+                f"Parsed project info for {slug}: "
+                f"id={project_info['id']}, "
+                f"project_id={project_info.get('project_id')}, "
+                f"display_name={project_info['display_name']}, "
+                f"timeline_members={len(project_info['members'])}"
+            )
 
             # Try to fetch members from dedicated members page
             members = []
@@ -84,9 +93,10 @@ class GroupCollector:
                 try:
                     logger.debug(f"Fetching members page for {slug} (ID: {project_id})")
                     members_html = self.client.fetch_project_members(project_id)
+                    logger.debug(f"Fetched members page: {len(members_html)} bytes")
                     members_parser = ProjectMembersPageParser(members_html)
                     members = members_parser.extract_members()
-                    logger.debug(f"Got {len(members)} members from members page")
+                    logger.info(f"Got {len(members)} members from members page for {slug}")
                 except Exception as e:
                     logger.warning(f"Failed to fetch members page for {slug}: {e}")
                     # Fall back to timeline parsing
@@ -94,7 +104,7 @@ class GroupCollector:
                     logger.debug(f"Falling back to timeline: {len(members)} members")
             else:
                 # No project_id, use timeline parsing fallback
-                logger.debug(f"No project_id for {slug}, using timeline fallback")
+                logger.warning(f"No project_id found for {slug}, using timeline fallback")
                 members = project_info["members"]
 
             group = Group(
@@ -105,11 +115,11 @@ class GroupCollector:
 
             # Cache the result
             self._cache[slug] = group
-            logger.debug(f"Cached group {slug} with {len(group.members)} members")
+            logger.info(f"Collected group {slug}: {len(group.members)} members")
             return group
 
         except Exception as e:
-            logger.warning(f"Failed to fetch group {slug}: {e}")
+            logger.warning(f"Failed to fetch group {slug}: {e}", exc_info=True)
             return None
 
     def collect_all_groups(
