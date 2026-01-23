@@ -126,6 +126,18 @@ class HeraldClient:
         """
         return self.fetch_page(f"/tag/{project_slug}/")
 
+    def fetch_project_members(self, project_id: str) -> str:
+        """
+        Fetch a project's members page.
+
+        Args:
+            project_id: Numeric project ID (e.g., '171')
+
+        Returns:
+            HTML content of the project members page
+        """
+        return self.fetch_page(f"/project/members/{project_id}/")
+
     @classmethod
     def from_environment(cls) -> "HeraldClient":
         """

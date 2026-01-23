@@ -488,15 +488,35 @@ class ProjectPageParser:
         Returns:
             Dictionary with project info: {
                 'id': 'project-slug',
+                'project_id': '171',  # Numeric ID for API/URL use
                 'display_name': 'Project Display Name',
-                'members': ['user1@example.com', 'user2@example.com']
+                'members': ['user1', 'user2']
             }
         """
         return {
             "id": self._extract_project_slug(),
+            "project_id": self._extract_project_id(),
             "display_name": self._extract_project_name(),
             "members": self._extract_members()
         }
+
+    def _extract_project_id(self) -> Optional[str]:
+        """Extract numeric project ID from the members link in sidebar.
+
+        The sidebar contains a link like /project/members/171/ which gives us
+        the numeric ID needed to fetch the members page directly.
+        """
+        # Look for the members link in sidebar: /project/members/{id}/
+        members_link = self.soup.find("a", href=lambda h: h and "/project/members/" in h)
+        if members_link:
+            href = members_link.get("href", "")
+            # Extract ID from /project/members/{id}/ pattern
+            match = re.search(r"/project/members/(\d+)/?", href)
+            if match:
+                return match.group(1)
+
+        logger.debug("Could not extract project ID from members link")
+        return None
 
     def _extract_project_slug(self) -> str:
         """Extract project slug from tag link in 'Looks Like' section or title."""
@@ -581,4 +601,64 @@ class ProjectPageParser:
         person_links = element.find_all("a", class_="phui-link-person")
         if len(person_links) >= 2:
             return person_links[1].get_text(strip=True)
+        return None
+
+
+class ProjectMembersPageParser:
+    """Parser for project members list page (/project/members/{id}/).
+
+    This parser extracts the authoritative list of current project members
+    from the dedicated members page, rather than computing membership from
+    timeline events.
+    """
+
+    def __init__(self, html: str) -> None:
+        """Initialize with HTML content."""
+        self.html: str = html
+        self.soup: BeautifulSoup = BeautifulSoup(html, "lxml")
+
+    def extract_members(self) -> List[str]:
+        """Extract list of current project members.
+
+        Returns:
+            List of usernames who are currently members of the project.
+        """
+        members: List[str] = []
+
+        # Look for member cards or list items with person links
+        # The members page typically shows a list of user cards
+        member_links = self.soup.find_all("a", class_="phui-link-person")
+        for link in member_links:
+            username = link.get_text(strip=True)
+            if username and username not in members:
+                members.append(username)
+
+        logger.debug(f"Extracted {len(members)} members from members page")
+        return sorted(members)
+
+    def has_pagination(self) -> bool:
+        """Check if the members list has pagination.
+
+        Returns:
+            True if there are more pages of members.
+        """
+        pager = self.soup.find("div", class_="phui-pager-view")
+        if not pager:
+            return False
+        # Check for "Next" link
+        next_link = pager.find("a", string=lambda s: s and "Next" in s)
+        return next_link is not None
+
+    def get_next_page_url(self) -> Optional[str]:
+        """Get URL for the next page of members if pagination exists.
+
+        Returns:
+            URL for the next page, or None if no next page.
+        """
+        pager = self.soup.find("div", class_="phui-pager-view")
+        if not pager:
+            return None
+        next_link = pager.find("a", string=lambda s: s and "Next" in s)
+        if next_link:
+            return next_link.get("href")
         return None

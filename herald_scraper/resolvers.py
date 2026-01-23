@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Set
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.models import Group, Rule
-from herald_scraper.parsers import ProjectPageParser
+from herald_scraper.parsers import ProjectMembersPageParser, ProjectPageParser
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,9 @@ class GroupCollector:
         """
         Fetch and parse group info for a single group.
 
+        Uses the dedicated members page (/project/members/{id}/) for authoritative
+        membership data. Falls back to timeline parsing if members page is unavailable.
+
         Uses caching to avoid duplicate fetches.
 
         Args:
@@ -68,14 +71,36 @@ class GroupCollector:
 
         try:
             logger.info(f"Fetching group: {slug}")
-            html = self.client.fetch_project(slug)
-            parser = ProjectPageParser(html)
-            info = parser.extract_project_info()
+
+            # First fetch project page to get project_id and basic info
+            project_html = self.client.fetch_project(slug)
+            project_parser = ProjectPageParser(project_html)
+            project_info = project_parser.extract_project_info()
+
+            # Try to fetch members from dedicated members page
+            members = []
+            project_id = project_info.get("project_id")
+            if project_id:
+                try:
+                    logger.debug(f"Fetching members page for {slug} (ID: {project_id})")
+                    members_html = self.client.fetch_project_members(project_id)
+                    members_parser = ProjectMembersPageParser(members_html)
+                    members = members_parser.extract_members()
+                    logger.debug(f"Got {len(members)} members from members page")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch members page for {slug}: {e}")
+                    # Fall back to timeline parsing
+                    members = project_info["members"]
+                    logger.debug(f"Falling back to timeline: {len(members)} members")
+            else:
+                # No project_id, use timeline parsing fallback
+                logger.debug(f"No project_id for {slug}, using timeline fallback")
+                members = project_info["members"]
 
             group = Group(
-                id=info["id"],
-                display_name=info["display_name"],
-                members=info["members"],
+                id=project_info["id"],
+                display_name=project_info["display_name"],
+                members=members,
             )
 
             # Cache the result

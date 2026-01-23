@@ -358,6 +358,7 @@ class TestProjectPageParser:
     @pytest.mark.parametrize("fixture_file,expected", [
         ("omc-reviewers.html", {
             "slug": "omc-reviewers",
+            "project_id": "171",
             "display_name": "omc-reviewers",
             # Full timeline available - exact member verification
             # Note: aminomancer is the actor (adds others), not a member
@@ -365,24 +366,28 @@ class TestProjectPageParser:
         }),
         ("android-reviewers.html", {
             "slug": "android-reviewers",
+            "project_id": "200",
             "display_name": "android-reviewers",
             # Large group with many members - verify minimum
             "min_members": 30,
         }),
         ("sidebar-reviewers-rotation.html", {
             "slug": "sidebar-reviewers-rotation",
+            "project_id": "207",
             "display_name": "sidebar-reviewers-rotation",
             # Timeline only shows removals, not initial members
             "min_members": 0,
         }),
         ("geckoview-api-reviewers.html", {
             "slug": "geckoview-api-reviewers",
+            "project_id": "226",
             "display_name": "geckoview-api-reviewers",
             # Only one addition visible in timeline
             "expected_members": ["tcampbell"],
         }),
         ("geckodriver-reviewers.html", {
             "slug": "geckodriver-reviewers",
+            "project_id": "232",
             "display_name": "geckodriver-reviewers",
             # No member events in timeline - empty is acceptable
             "min_members": 0,
@@ -401,6 +406,10 @@ class TestProjectPageParser:
         # Check slug
         assert info["id"] == expected["slug"], \
             f"Slug mismatch: got '{info['id']}', expected '{expected['slug']}'"
+
+        # Check project_id
+        assert info["project_id"] == expected["project_id"], \
+            f"Project ID mismatch: got '{info['project_id']}', expected '{expected['project_id']}'"
 
         # Check display name
         assert info["display_name"] == expected["display_name"], \
@@ -429,6 +438,24 @@ class TestProjectPageParser:
 
         slug = parser._extract_project_slug()
         assert slug == "omc-reviewers"
+
+    def test_extract_project_id_from_members_link(self):
+        """Test extracting project ID from members link in sidebar."""
+        fixture_path = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        if not fixture_path.exists():
+            pytest.skip("omc-reviewers fixture not found")
+
+        html = fixture_path.read_text()
+        parser = ProjectPageParser(html)
+
+        project_id = parser._extract_project_id()
+        assert project_id == "171"
+
+    def test_extract_project_id_not_found(self):
+        """Test project ID extraction when members link is missing."""
+        html = '<html><body><div>No members link here</div></body></html>'
+        parser = ProjectPageParser(html)
+        assert parser._extract_project_id() is None
 
     def test_extract_display_name_from_title(self):
         """Test extracting display name from page title."""

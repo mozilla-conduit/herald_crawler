@@ -89,6 +89,33 @@ class PhabricatorFetcher:
         url = f"{self.base_url}/tag/{project_slug}/"
         return self.fetch_page(url)
 
+    def fetch_project_members(self, project_id: str) -> str:
+        """Fetch a project's members page.
+
+        Args:
+            project_id: Numeric project ID (e.g., '171')
+
+        Returns:
+            HTML content of the project members page
+        """
+        url = f"{self.base_url}/project/members/{project_id}/"
+        return self.fetch_page(url)
+
+    def extract_project_id(self, project_html: str) -> str:
+        """Extract numeric project ID from project page HTML.
+
+        Looks for the members link in sidebar: /project/members/{id}/
+        """
+        import re
+        soup = BeautifulSoup(project_html, "lxml")
+        members_link = soup.find("a", href=lambda h: h and "/project/members/" in h)
+        if members_link:
+            href = members_link.get("href", "")
+            match = re.search(r"/project/members/(\d+)/?", href)
+            if match:
+                return match.group(1)
+        raise ValueError("Could not extract project ID from page")
+
     def extract_rule_ids_from_listing(self, html: str) -> List[str]:
         """Extract Herald rule IDs from the listing page."""
         soup = BeautifulSoup(html, "lxml")
@@ -149,6 +176,11 @@ def main():
         "--recommended",
         action="store_true",
         help="Fetch the recommended diverse set of rules from analysis"
+    )
+    parser.add_argument(
+        "--fetch-members",
+        action="store_true",
+        help="Fetch members pages for existing project fixtures in groups/"
     )
 
     args = parser.parse_args()
@@ -213,12 +245,45 @@ def main():
             print(f"\n=== Fetching {len(args.projects)} project/group pages ===")
             for project_slug in args.projects:
                 try:
+                    # Fetch project manage page
                     project_html = fetcher.fetch_project(project_slug)
                     save_file(project_html, FIXTURES_DIR / "groups" / f"{project_slug}.html")
                     time.sleep(args.delay)
+
+                    # Also fetch members page
+                    try:
+                        project_id = fetcher.extract_project_id(project_html)
+                        print(f"  Project {project_slug} has ID {project_id}, fetching members page...")
+                        members_html = fetcher.fetch_project_members(project_id)
+                        save_file(members_html, FIXTURES_DIR / "groups" / f"{project_slug}-members.html")
+                        time.sleep(args.delay)
+                    except Exception as e:
+                        print(f"  WARNING: Could not fetch members page for {project_slug}: {e}")
+
                 except Exception as e:
                     print(f"ERROR fetching project {project_slug}: {e}")
                     continue
+
+        # Fetch members pages for existing project fixtures
+        if args.fetch_members:
+            groups_dir = FIXTURES_DIR / "groups"
+            existing_projects = [f.stem for f in groups_dir.glob("*.html") if not f.stem.endswith("-members")]
+            print(f"\n=== Fetching members pages for {len(existing_projects)} existing projects ===")
+            for project_slug in existing_projects:
+                members_file = groups_dir / f"{project_slug}-members.html"
+                if members_file.exists():
+                    print(f"  Skipping {project_slug} (members page already exists)")
+                    continue
+
+                try:
+                    project_html = (groups_dir / f"{project_slug}.html").read_text()
+                    project_id = fetcher.extract_project_id(project_html)
+                    print(f"  Fetching members for {project_slug} (ID: {project_id})...")
+                    members_html = fetcher.fetch_project_members(project_id)
+                    save_file(members_html, members_file)
+                    time.sleep(args.delay)
+                except Exception as e:
+                    print(f"  ERROR: Could not fetch members for {project_slug}: {e}")
 
         print("\n=== Done! ===")
         print(f"Fixtures saved to: {FIXTURES_DIR}")
