@@ -5,8 +5,8 @@ Fetch Herald rule pages from Phabricator for use as test fixtures.
 This script requires authentication via session cookie.
 
 Usage:
-    # Set session cookie
-    export PHAB_SESSION_COOKIE="your-phsid-cookie-value"
+    # Set session cookie (same variable as HeraldClient)
+    export PHABRICATOR_SESSION_COOKIE="your-phsid-cookie-value"
 
     # Fetch default examples (4 rules)
     python scripts/fetch_fixtures.py
@@ -185,17 +185,17 @@ def main():
 
     args = parser.parse_args()
 
-    # Get credentials from environment
-    session_cookie = os.environ.get("PHAB_SESSION_COOKIE")
+    # Get credentials from environment (support both variable names)
+    session_cookie = os.environ.get("PHABRICATOR_SESSION_COOKIE") or os.environ.get("PHAB_SESSION_COOKIE")
 
     if not session_cookie:
         print("ERROR: No authentication provided!")
-        print("Please set PHAB_SESSION_COOKIE environment variable")
+        print("Please set PHABRICATOR_SESSION_COOKIE environment variable")
         print("\nTo get your session cookie:")
         print("1. Log in to Phabricator in your browser")
         print("2. Open Developer Tools > Application > Cookies")
         print("3. Copy the 'phsid' cookie value")
-        print("4. export PHAB_SESSION_COOKIE='your-cookie-value'")
+        print("4. export PHABRICATOR_SESSION_COOKIE='your-cookie-value'")
         sys.exit(1)
 
     fetcher = PhabricatorFetcher(session_cookie=session_cookie)

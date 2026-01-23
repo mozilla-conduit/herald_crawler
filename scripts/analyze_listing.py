@@ -118,7 +118,7 @@ def analyze_listing():
         print(f"{i}. {rule_id}")
 
     print("\nTo fetch these:")
-    print("export PHAB_SESSION_COOKIE='your-cookie-value'")
+    print("export PHABRICATOR_SESSION_COOKIE='your-cookie-value'")
     print(f"python scripts/fetch_fixtures.py --rules {' '.join(sample_rules)}")
     print()
 

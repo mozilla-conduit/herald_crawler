@@ -168,7 +168,7 @@ The `scripts/` directory contains utility scripts for development and testing:
 ### Fixture Collection
 
 - **`fetch_fixtures.py`**: Fetch Herald rule pages from Phabricator for test fixtures
-  - Requires authentication via `PHAB_SESSION_COOKIE` environment variable
+  - Requires authentication via `PHABRICATOR_SESSION_COOKIE` environment variable
   - Can fetch specific rules, all rules, or recommended diverse set
   - Usage: `python scripts/fetch_fixtures.py --rules H420 H422 H425`
 

@@ -39,7 +39,7 @@ pip install requests beautifulsoup4 lxml
 # 1. Log in to Phabricator in your browser
 # 2. Open Developer Tools > Application > Cookies
 # 3. Copy the 'phsid' cookie value
-export PHAB_SESSION_COOKIE="your-phsid-cookie-value"
+export PHABRICATOR_SESSION_COOKIE="your-phsid-cookie-value"
 
 # Run the script (fetches default examples)
 python scripts/fetch_fixtures.py
