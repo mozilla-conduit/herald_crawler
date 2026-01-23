@@ -9,9 +9,10 @@ import requests
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.exceptions import RuleParseError
-from herald_scraper.models import Group, Rule, HeraldRulesOutput, Metadata
+from herald_scraper.models import Group, Rule, HeraldRulesOutput, Metadata, UnresolvedUser
 from herald_scraper.parsers import ListingPageParser, RuleDetailPageParser
-from herald_scraper.resolvers import GroupCollector
+from herald_scraper.people_client import PeopleDirectoryClient
+from herald_scraper.resolvers import GroupCollector, UsernameResolver
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,8 @@ class HeraldCrawler:
         max_pages: int = 100,
         extract_groups: bool = True,
         max_groups: Optional[int] = None,
+        people_client: Optional[PeopleDirectoryClient] = None,
+        max_users: Optional[int] = None,
     ) -> HeraldRulesOutput:
         """
         Extract all Herald rules and return complete output.
@@ -94,6 +97,8 @@ class HeraldCrawler:
             max_pages: Maximum number of listing pages to fetch (default 100, use 1 to skip pagination)
             extract_groups: If True, also extract group membership for reviewer groups (default)
             max_groups: Optional limit on number of groups to collect (stops collecting early)
+            people_client: Optional PeopleDirectoryClient for GitHub username resolution
+            max_users: Optional limit on number of users to resolve (stops resolving early)
 
         Returns:
             HeraldRulesOutput with all extracted rules, groups, and metadata
@@ -112,6 +117,16 @@ class HeraldCrawler:
             group_collector = GroupCollector(self.client)
             groups = group_collector.collect_all_groups(rules, max_groups=max_groups)
 
+        # Resolve GitHub usernames if people_client provided
+        github_usernames: Dict[str, str] = {}
+        unresolved_users: List[UnresolvedUser] = []
+        if people_client and rules:
+            logger.info("Resolving GitHub usernames for users")
+            username_resolver = UsernameResolver(people_client)
+            github_usernames, unresolved_users = username_resolver.resolve_all(
+                rules, groups, max_users=max_users, delay=people_client.delay
+            )
+
         parsed_url = urlparse(self.client.base_url)
         instance = parsed_url.netloc or self.client.base_url
 
@@ -125,6 +140,8 @@ class HeraldCrawler:
         return HeraldRulesOutput(
             rules=rules,
             groups=groups,
+            github_usernames=github_usernames,
+            unresolved_users=unresolved_users,
             metadata=metadata,
         )
 

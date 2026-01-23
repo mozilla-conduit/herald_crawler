@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from herald_scraper.models import Action, Group, Reviewer, Rule
-from herald_scraper.resolvers import GroupCollector
+from herald_scraper.models import Action, Group, Reviewer, Rule, UnresolvedUser
+from herald_scraper.resolvers import GroupCollector, UsernameResolver
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -282,3 +282,257 @@ class TestGroupCollectorIntegration:
             assert slug in groups
             assert isinstance(groups[slug], Group)
             assert groups[slug].id == slug
+
+
+class TestUsernameResolver:
+    """Tests for UsernameResolver class."""
+
+    @pytest.fixture
+    def mock_people_client(self):
+        """Create a mock PeopleDirectoryClient."""
+        return MagicMock()
+
+    @pytest.fixture
+    def resolver(self, mock_people_client):
+        """Create a UsernameResolver with mock client."""
+        return UsernameResolver(mock_people_client)
+
+    @pytest.fixture
+    def sample_rules(self):
+        """Create sample rules with various user types."""
+        return [
+            Rule(
+                id="H420",
+                name="Test Rule 1",
+                author="alice@mozilla.com",
+                status="active",
+                type="differential-revision",
+                conditions=[],
+                actions=[
+                    Action(
+                        type="add-reviewers",
+                        reviewers=[
+                            Reviewer(target="omc-reviewers", blocking=True),
+                            Reviewer(target="bob@mozilla.com", blocking=False),
+                        ],
+                    ),
+                ],
+            ),
+            Rule(
+                id="H421",
+                name="Test Rule 2",
+                author="charlie@mozilla.com",
+                status="active",
+                type="differential-revision",
+                conditions=[],
+                actions=[
+                    Action(
+                        type="add-reviewers",
+                        reviewers=[
+                            Reviewer(target="android-reviewers", blocking=True),
+                            Reviewer(target="alice@mozilla.com", blocking=False),  # Duplicate
+                        ],
+                    ),
+                ],
+            ),
+        ]
+
+    @pytest.fixture
+    def sample_groups(self):
+        """Create sample groups with members."""
+        return {
+            "omc-reviewers": Group(
+                id="omc-reviewers",
+                display_name="OMC Reviewers",
+                members=["dan", "eve", "alice"],  # alice appears in both rules and group
+            ),
+            "android-reviewers": Group(
+                id="android-reviewers",
+                display_name="Android Reviewers",
+                members=["frank", "grace"],
+            ),
+        }
+
+    def test_extract_usernames_from_rules(self, resolver, sample_rules):
+        """Test extracting usernames from rules, excluding groups."""
+        group_slugs = {"omc-reviewers", "android-reviewers"}
+        username_refs = resolver.extract_usernames_from_rules(sample_rules, group_slugs)
+
+        # Should find 3 unique users with @ (excluding groups)
+        assert len(username_refs) == 3
+        assert "alice@mozilla.com" in username_refs
+        assert "bob@mozilla.com" in username_refs
+        assert "charlie@mozilla.com" in username_refs
+        # Groups should NOT be included
+        assert "omc-reviewers" not in username_refs
+        assert "android-reviewers" not in username_refs
+
+    def test_extract_usernames_from_rules_tracks_references(self, resolver, sample_rules):
+        """Test that username references are tracked correctly."""
+        group_slugs = {"omc-reviewers", "android-reviewers"}
+        username_refs = resolver.extract_usernames_from_rules(sample_rules, group_slugs)
+
+        # alice appears in both rules (as author in H420, as reviewer in H421)
+        assert "H420" in username_refs["alice@mozilla.com"]
+        assert "H421" in username_refs["alice@mozilla.com"]
+        # bob only appears in H420
+        assert username_refs["bob@mozilla.com"] == ["H420"]
+        # charlie is author of H421
+        assert username_refs["charlie@mozilla.com"] == ["H421"]
+
+    def test_extract_usernames_from_groups(self, resolver, sample_groups):
+        """Test extracting usernames from group members."""
+        username_refs = resolver.extract_usernames_from_groups(sample_groups)
+
+        # Should find 5 unique members
+        assert len(username_refs) == 5
+        assert "dan" in username_refs
+        assert "eve" in username_refs
+        assert "alice" in username_refs
+        assert "frank" in username_refs
+        assert "grace" in username_refs
+
+    def test_extract_usernames_from_groups_tracks_references(self, resolver, sample_groups):
+        """Test that group member references are tracked correctly."""
+        username_refs = resolver.extract_usernames_from_groups(sample_groups)
+
+        assert username_refs["dan"] == ["group:omc-reviewers"]
+        assert username_refs["frank"] == ["group:android-reviewers"]
+
+    def test_resolve_username_success(self, resolver, mock_people_client):
+        """Test successfully resolving a username."""
+        mock_people_client.resolve_github_username.return_value = "alice-gh"
+
+        result = resolver.resolve_username("alice@mozilla.com")
+
+        assert result == "alice-gh"
+        mock_people_client.resolve_github_username.assert_called_once_with("alice")
+
+    def test_resolve_username_not_found(self, resolver, mock_people_client):
+        """Test resolving a username that doesn't exist."""
+        mock_people_client.resolve_github_username.return_value = None
+
+        result = resolver.resolve_username("unknown@mozilla.com")
+
+        assert result is None
+        assert "unknown" in resolver._unresolved
+
+    def test_resolve_username_caching(self, resolver, mock_people_client):
+        """Test that resolved usernames are cached."""
+        mock_people_client.resolve_github_username.return_value = "alice-gh"
+
+        # First call
+        result1 = resolver.resolve_username("alice@mozilla.com")
+        # Second call (should use cache)
+        result2 = resolver.resolve_username("alice@mozilla.com")
+
+        assert result1 == result2 == "alice-gh"
+        # Client should only be called once
+        mock_people_client.resolve_github_username.assert_called_once()
+
+    def test_resolve_username_error_handling(self, resolver, mock_people_client):
+        """Test handling API errors during resolution."""
+        mock_people_client.resolve_github_username.side_effect = Exception("API error")
+
+        result = resolver.resolve_username("error@mozilla.com")
+
+        assert result is None
+        assert "error" in resolver._unresolved
+        assert "API error" in resolver._unresolved["error"]
+
+    def test_resolve_all_success(self, resolver, mock_people_client, sample_rules, sample_groups):
+        """Test resolving all usernames from rules and groups."""
+        def mock_resolve(username):
+            return f"{username}-gh"
+
+        mock_people_client.resolve_github_username.side_effect = mock_resolve
+
+        resolved, unresolved = resolver.resolve_all(
+            sample_rules, sample_groups, delay=0
+        )
+
+        # Should resolve users from both rules and groups
+        assert len(resolved) > 0
+        assert all(v.endswith("-gh") for v in resolved.values())
+        assert len(unresolved) == 0
+
+    def test_resolve_all_partial_failure(self, resolver, mock_people_client, sample_rules, sample_groups):
+        """Test resolving usernames with some failures."""
+        def mock_resolve(username):
+            if username == "alice":
+                return "alice-gh"
+            return None
+
+        mock_people_client.resolve_github_username.side_effect = mock_resolve
+
+        resolved, unresolved = resolver.resolve_all(
+            sample_rules, sample_groups, delay=0
+        )
+
+        # Only alice should be resolved
+        assert "alice" in resolved
+        assert resolved["alice"] == "alice-gh"
+        # Others should be unresolved
+        assert len(unresolved) > 0
+        unresolved_names = {u.phabricator_username for u in unresolved}
+        assert "bob" in unresolved_names or "charlie" in unresolved_names
+
+    def test_resolve_all_max_users(self, resolver, mock_people_client):
+        """Test limiting the number of users resolved."""
+        # Create rules with unique users to avoid caching effects
+        rules = [
+            Rule(
+                id="H999",
+                name="Test Rule",
+                author="user1@mozilla.com",
+                status="active",
+                type="differential-revision",
+                conditions=[],
+                actions=[
+                    Action(
+                        type="add-reviewers",
+                        reviewers=[
+                            Reviewer(target="user2@mozilla.com", blocking=False),
+                            Reviewer(target="user3@mozilla.com", blocking=False),
+                            Reviewer(target="user4@mozilla.com", blocking=False),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+
+        def mock_resolve(username):
+            return f"{username}-gh"
+
+        mock_people_client.resolve_github_username.side_effect = mock_resolve
+
+        resolved, unresolved = resolver.resolve_all(
+            rules, {}, max_users=2, delay=0
+        )
+
+        # Should only resolve 2 users
+        assert len(resolved) == 2
+        assert mock_people_client.resolve_github_username.call_count == 2
+
+    def test_resolve_all_empty_inputs(self, resolver, mock_people_client):
+        """Test resolving with empty rules and groups."""
+        resolved, unresolved = resolver.resolve_all([], {}, delay=0)
+
+        assert resolved == {}
+        assert unresolved == []
+        mock_people_client.resolve_github_username.assert_not_called()
+
+    def test_clear_cache(self, resolver, mock_people_client):
+        """Test clearing the resolver caches."""
+        mock_people_client.resolve_github_username.return_value = "alice-gh"
+
+        # Populate cache
+        resolver.resolve_username("alice@mozilla.com")
+        assert mock_people_client.resolve_github_username.call_count == 1
+
+        # Clear cache
+        resolver.clear_cache()
+
+        # Should call client again
+        resolver.resolve_username("alice@mozilla.com")
+        assert mock_people_client.resolve_github_username.call_count == 2

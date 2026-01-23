@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 import sys
 
 import requests
@@ -9,6 +10,7 @@ import requests
 from herald_scraper.client import HeraldClient
 from herald_scraper.crawler import HeraldCrawler
 from herald_scraper.exceptions import AuthenticationError
+from herald_scraper.people_client import PeopleDirectoryClient
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -98,6 +100,22 @@ def main() -> int:
         help="Enable verbose logging",
     )
 
+    # GitHub username resolution options
+    parser.add_argument(
+        "--no-resolve-github",
+        action="store_true",
+        help="Skip resolving Phabricator usernames to GitHub usernames",
+    )
+    parser.add_argument(
+        "--pmo-cookie",
+        help="People Mozilla access cookie (or set PEOPLE_MOZILLA_COOKIE env var)",
+    )
+    parser.add_argument(
+        "--max-users",
+        type=int,
+        help="Maximum number of users to resolve GitHub usernames for",
+    )
+
     args = parser.parse_args()
     setup_logging(args.verbose)
 
@@ -121,12 +139,27 @@ def main() -> int:
 
         max_pages = 1 if args.single_page else args.max_pages
 
+        # Set up People Directory client for GitHub resolution (enabled by default)
+        people_client = None
+        if not args.no_resolve_github:
+            pmo_cookie = args.pmo_cookie or os.environ.get("PEOPLE_MOZILLA_COOKIE")
+            if pmo_cookie:
+                people_client = PeopleDirectoryClient(cookie=pmo_cookie, delay=args.delay)
+                logger.info("GitHub username resolution enabled")
+            else:
+                logger.warning(
+                    "GitHub resolution skipped: no PMO cookie available. "
+                    "Set PEOPLE_MOZILLA_COOKIE env var or use --pmo-cookie"
+                )
+
         logger.info("Starting Herald rules extraction...")
         output = crawler.extract_all_rules(
             global_only=not args.all_rules,
             max_rules=args.max_rules,
             max_pages=max_pages,
             max_groups=args.max_groups,
+            people_client=people_client,
+            max_users=args.max_users,
         )
 
         json_output = output.model_dump_json(indent=2)
@@ -138,7 +171,12 @@ def main() -> int:
         else:
             print(json_output)
 
-        logger.info(f"Extracted {len(output.rules)} rules")
+        logger.info(f"Extracted {len(output.rules)} rules, {len(output.groups)} groups")
+        if output.github_usernames:
+            logger.info(
+                f"Resolved {len(output.github_usernames)} GitHub usernames, "
+                f"{len(output.unresolved_users)} unresolved"
+            )
         return 0
 
     except AuthenticationError as e:
