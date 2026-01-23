@@ -57,12 +57,28 @@ def main() -> int:
     parser.add_argument(
         "--max-rules",
         type=int,
-        help="Maximum number of rules to extract",
+        help="Maximum number of rules to extract (stops fetching pages early)",
+    )
+    parser.add_argument(
+        "--max-groups",
+        type=int,
+        help="Maximum number of reviewer groups to collect (stops collecting early)",
     )
     parser.add_argument(
         "--all-rules",
         action="store_true",
         help="Extract all rules, not just global ones",
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=100,
+        help="Maximum number of listing pages to fetch (default: 100)",
+    )
+    parser.add_argument(
+        "--single-page",
+        action="store_true",
+        help="Only fetch the first page of rules (equivalent to --max-pages 1)",
     )
     parser.add_argument(
         "--delay",
@@ -103,10 +119,14 @@ def main() -> int:
 
         crawler = HeraldCrawler(client=client, progress_callback=progress_callback)
 
+        max_pages = 1 if args.single_page else args.max_pages
+
         logger.info("Starting Herald rules extraction...")
         output = crawler.extract_all_rules(
             global_only=not args.all_rules,
             max_rules=args.max_rules,
+            max_pages=max_pages,
+            max_groups=args.max_groups,
         )
 
         json_output = output.model_dump_json(indent=2)

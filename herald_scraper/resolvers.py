@@ -112,12 +112,15 @@ class GroupCollector:
             logger.warning(f"Failed to fetch group {slug}: {e}")
             return None
 
-    def collect_all_groups(self, rules: List[Rule]) -> Dict[str, Group]:
+    def collect_all_groups(
+        self, rules: List[Rule], max_groups: Optional[int] = None
+    ) -> Dict[str, Group]:
         """
         Collect all groups referenced in the given rules.
 
         Args:
             rules: List of Rule objects to collect groups from
+            max_groups: Optional limit on number of groups to collect (stops collecting early)
 
         Returns:
             Dictionary mapping group slugs to Group objects
@@ -126,6 +129,13 @@ class GroupCollector:
         groups: Dict[str, Group] = {}
 
         for slug in sorted(group_slugs):
+            # Check if we've collected enough groups
+            if max_groups is not None and len(groups) >= max_groups:
+                logger.info(
+                    f"Collected {len(groups)} groups, stopping (max_groups={max_groups})"
+                )
+                break
+
             group = self.fetch_group(slug)
             if group:
                 groups[slug] = group

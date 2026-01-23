@@ -81,26 +81,27 @@ class HeraldCrawler:
         self,
         global_only: bool = True,
         max_rules: Optional[int] = None,
+        max_pages: int = 100,
         extract_groups: bool = True,
+        max_groups: Optional[int] = None,
     ) -> HeraldRulesOutput:
         """
         Extract all Herald rules and return complete output.
 
         Args:
             global_only: If True, only extract global rules (default)
-            max_rules: Optional limit on number of rules to extract
+            max_rules: Optional limit on number of rules to extract (stops fetching pages early)
+            max_pages: Maximum number of listing pages to fetch (default 100, use 1 to skip pagination)
             extract_groups: If True, also extract group membership for reviewer groups (default)
+            max_groups: Optional limit on number of groups to collect (stops collecting early)
 
         Returns:
             HeraldRulesOutput with all extracted rules, groups, and metadata
         """
         if global_only:
-            rule_ids = self.extract_global_rule_ids()
+            rule_ids = self.extract_global_rule_ids(max_pages=max_pages, max_rules=max_rules)
         else:
-            rule_ids = self.extract_rule_ids()
-
-        if max_rules is not None:
-            rule_ids = rule_ids[:max_rules]
+            rule_ids = self.extract_rule_ids(max_pages=max_pages, max_rules=max_rules)
 
         rules = self.extract_rules(rule_ids)
 
@@ -109,7 +110,7 @@ class HeraldCrawler:
         if extract_groups and rules:
             logger.info("Collecting group membership for reviewer groups")
             group_collector = GroupCollector(self.client)
-            groups = group_collector.collect_all_groups(rules)
+            groups = group_collector.collect_all_groups(rules, max_groups=max_groups)
 
         parsed_url = urlparse(self.client.base_url)
         instance = parsed_url.netloc or self.client.base_url
@@ -168,12 +169,15 @@ class HeraldCrawler:
         # Reached max_pages limit
         yield parser, True
 
-    def extract_rule_ids(self, max_pages: int = 100) -> List[str]:
+    def extract_rule_ids(
+        self, max_pages: int = 100, max_rules: Optional[int] = None
+    ) -> List[str]:
         """
         Extract all rule IDs from listing pages, following pagination.
 
         Args:
             max_pages: Maximum number of pages to fetch (default 100, safeguard against infinite loops)
+            max_rules: Stop fetching pages once this many rule IDs are collected (default None = no limit)
 
         Returns:
             List of rule IDs (e.g., ['H417', 'H418', ...])
@@ -184,8 +188,15 @@ class HeraldCrawler:
             page_rule_ids = parser.extract_rule_ids()
             all_rule_ids.extend(page_rule_ids)
 
+            # Check if we've collected enough rules
+            unique_ids = _deduplicate_rule_ids(all_rule_ids)
+            if max_rules is not None and len(unique_ids) >= max_rules:
+                logger.info(
+                    f"Collected {len(unique_ids)} rule IDs, stopping pagination (max_rules={max_rules})"
+                )
+                return _sort_rule_ids(unique_ids[:max_rules])
+
             if reached_max:
-                unique_ids = _deduplicate_rule_ids(all_rule_ids)
                 logger.warning(
                     f"Reached max pages limit ({max_pages}), found {len(unique_ids)} rules. "
                     f"Some rules may be missing."
@@ -194,12 +205,15 @@ class HeraldCrawler:
         unique_ids = _deduplicate_rule_ids(all_rule_ids)
         return _sort_rule_ids(unique_ids)
 
-    def extract_global_rule_ids(self, max_pages: int = 100) -> List[str]:
+    def extract_global_rule_ids(
+        self, max_pages: int = 100, max_rules: Optional[int] = None
+    ) -> List[str]:
         """
         Extract only global rule IDs from listing pages, following pagination.
 
         Args:
             max_pages: Maximum number of pages to fetch (default 100, safeguard against infinite loops)
+            max_rules: Stop fetching pages once this many rule IDs are collected (default None = no limit)
 
         Returns:
             List of global rule IDs
@@ -211,8 +225,15 @@ class HeraldCrawler:
             global_on_page = parser.filter_global_rules(page_rule_ids)
             all_global_rule_ids.extend(global_on_page)
 
+            # Check if we've collected enough rules
+            unique_ids = _deduplicate_rule_ids(all_global_rule_ids)
+            if max_rules is not None and len(unique_ids) >= max_rules:
+                logger.info(
+                    f"Collected {len(unique_ids)} global rule IDs, stopping pagination (max_rules={max_rules})"
+                )
+                return _sort_rule_ids(unique_ids[:max_rules])
+
             if reached_max:
-                unique_ids = _deduplicate_rule_ids(all_global_rule_ids)
                 logger.warning(
                     f"Reached max pages limit ({max_pages}), found {len(unique_ids)} global rules. "
                     f"Some rules may be missing."
