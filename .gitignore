@@ -12,3 +12,7 @@ build/
 .mypy_cache/
 .ruff_cache/
 herald_rules.json
+
+# Anonymization files (contain PII mappings - DO NOT COMMIT)
+anonymization_mapping.json
+git_filter_expressions.txt
