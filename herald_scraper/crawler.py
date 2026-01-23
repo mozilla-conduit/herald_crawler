@@ -2,15 +2,16 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Generator, List, Optional, Callable, Tuple
+from typing import Dict, Generator, List, Optional, Callable, Tuple
 from urllib.parse import urlparse
 
 import requests
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.exceptions import RuleParseError
-from herald_scraper.models import Rule, HeraldRulesOutput, Metadata
+from herald_scraper.models import Group, Rule, HeraldRulesOutput, Metadata
 from herald_scraper.parsers import ListingPageParser, RuleDetailPageParser
+from herald_scraper.resolvers import GroupCollector
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class HeraldCrawler:
         self,
         global_only: bool = True,
         max_rules: Optional[int] = None,
+        extract_groups: bool = True,
     ) -> HeraldRulesOutput:
         """
         Extract all Herald rules and return complete output.
@@ -87,9 +89,10 @@ class HeraldCrawler:
         Args:
             global_only: If True, only extract global rules (default)
             max_rules: Optional limit on number of rules to extract
+            extract_groups: If True, also extract group membership for reviewer groups (default)
 
         Returns:
-            HeraldRulesOutput with all extracted rules and metadata
+            HeraldRulesOutput with all extracted rules, groups, and metadata
         """
         if global_only:
             rule_ids = self.extract_global_rule_ids()
@@ -101,19 +104,26 @@ class HeraldCrawler:
 
         rules = self.extract_rules(rule_ids)
 
+        # Collect group membership if requested
+        groups: Dict[str, Group] = {}
+        if extract_groups and rules:
+            logger.info("Collecting group membership for reviewer groups")
+            group_collector = GroupCollector(self.client)
+            groups = group_collector.collect_all_groups(rules)
+
         parsed_url = urlparse(self.client.base_url)
         instance = parsed_url.netloc or self.client.base_url
 
         metadata = Metadata(
             extracted_at=datetime.now(timezone.utc),
             total_rules=len(rules),
-            total_groups=0,
+            total_groups=len(groups),
             phabricator_instance=instance,
         )
 
         return HeraldRulesOutput(
             rules=rules,
-            groups={},
+            groups=groups,
             metadata=metadata,
         )
 
