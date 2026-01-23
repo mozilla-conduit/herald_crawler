@@ -28,8 +28,14 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 import requests
+
+# Add the project root to path so we can import herald_scraper
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from herald_scraper.people_client import extract_github_id, extract_github_username
 
 PMO_GRAPHQL_URL = "https://people.mozilla.org/api/v4/graphql"
 PMO_GITHUB_USERNAME_URL = "https://people.mozilla.org/whoami/github/username/{github_id}"
@@ -118,39 +124,6 @@ def query_github_username(session: requests.Session, github_id: str, verbose: bo
     return response.json()
 
 
-def extract_github_id(response: dict) -> str | None:
-    """Extract GitHub ID from GraphQL response.
-
-    Args:
-        response: JSON response from GraphQL API
-
-    Returns:
-        GitHub ID if found, None otherwise
-    """
-    try:
-        profile = response.get("data", {}).get("profile")
-        if not profile:
-            return None
-
-        identities = profile.get("identities", {})
-        github_id = identities.get("githubIdV3", {})
-        return github_id.get("value")
-    except (KeyError, TypeError):
-        return None
-
-
-def extract_github_username(response: dict) -> str | None:
-    """Extract GitHub username from REST response.
-
-    Args:
-        response: JSON response from REST API
-
-    Returns:
-        GitHub username if found, None otherwise
-    """
-    return response.get("username")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Test PMO API for GitHub username lookup (two-step process)",
@@ -207,7 +180,6 @@ def main():
                 print("Result: User not found in People Directory")
 
             if args.save_dir:
-                from pathlib import Path
                 save_dir = Path(args.save_dir)
                 save_dir.mkdir(parents=True, exist_ok=True)
                 filepath = save_dir / f"{args.username}_graphql.json"
@@ -233,7 +205,6 @@ def main():
             print("Result: Could not resolve GitHub username from ID")
 
         if args.save_dir:
-            from pathlib import Path
             save_dir = Path(args.save_dir)
             save_dir.mkdir(parents=True, exist_ok=True)
             graphql_path = save_dir / f"{args.username}_graphql.json"

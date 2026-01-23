@@ -1,6 +1,7 @@
 """Client for Mozilla People Directory API."""
 
 import logging
+import time
 from typing import Optional
 
 import requests
@@ -96,6 +97,9 @@ class PeopleDirectoryClient:
         if not github_id:
             logger.debug(f"No GitHub ID found for: {username}")
             return None
+
+        # Rate limit between API calls
+        time.sleep(self.delay)
 
         # Step 2: Get GitHub username from ID
         rest_response = self.get_github_username_by_id(github_id)

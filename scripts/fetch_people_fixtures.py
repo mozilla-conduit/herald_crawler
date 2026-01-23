@@ -25,6 +25,11 @@ from pathlib import Path
 
 import requests
 
+# Add the project root to path so we can import herald_scraper
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from herald_scraper.people_client import extract_github_id
+
 PMO_GRAPHQL_URL = "https://people.mozilla.org/api/v4/graphql"
 PMO_GITHUB_USERNAME_URL = "https://people.mozilla.org/whoami/github/username/{github_id}"
 FIXTURES_DIR = Path(__file__).parent.parent / "tests" / "fixtures" / "people"
@@ -66,19 +71,6 @@ class PeopleDirectoryClient:
         response = self.session.get(url)
         response.raise_for_status()
         return response.json()
-
-
-def extract_github_id(response: dict) -> str | None:
-    """Extract GitHub ID from GraphQL response."""
-    try:
-        profile = response.get("data", {}).get("profile")
-        if not profile:
-            return None
-        identities = profile.get("identities", {})
-        github_id = identities.get("githubIdV3", {})
-        return github_id.get("value")
-    except (KeyError, TypeError):
-        return None
 
 
 def save_fixture(data: dict, filepath: Path):
