@@ -3,7 +3,15 @@
 Anonymize PII in test fixtures.
 
 This script replaces real usernames, GitHub IDs, and other identifying information
-with fake values while maintaining consistency (same real user -> same fake user).
+with hashed values. Uses one-way hashing to ensure:
+- Same input always produces the same output (deterministic)
+- Cannot reverse the hash to get the original value
+- Clear prefixes identify the type of anonymized value
+
+Prefixes used:
+- USER-xxxx: Phabricator usernames
+- GHID-xxxx: GitHub numeric IDs
+- GHUSER-xxxx: GitHub usernames
 
 Usage:
     # Dry run (show what would change)
@@ -11,12 +19,10 @@ Usage:
 
     # Actually anonymize
     python scripts/anonymize_fixtures.py
-
-    # Save mapping to file (for reference, do NOT commit)
-    python scripts/anonymize_fixtures.py --save-mapping anonymization_mapping.json
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -25,50 +31,64 @@ from typing import Dict, Set, Tuple
 
 FIXTURES_DIR = Path(__file__).parent.parent / "tests" / "fixtures"
 
+# Hash length for anonymized identifiers (characters after prefix)
+HASH_LENGTH = 8
+
+
+def hash_value(value: str, prefix: str) -> str:
+    """Generate a deterministic hash-based anonymized value.
+
+    Args:
+        value: The original PII value to anonymize
+        prefix: The prefix to use (e.g., "USER-", "GHID-")
+
+    Returns:
+        Anonymized value like "USER-a1b2c3d4"
+    """
+    # Use SHA-256 for consistent hashing, take first HASH_LENGTH hex chars
+    hash_hex = hashlib.sha256(value.encode()).hexdigest()[:HASH_LENGTH]
+    return f"{prefix}{hash_hex}"
+
 
 class Anonymizer:
-    """Handles consistent anonymization of usernames and identifiers."""
+    """Handles consistent anonymization of usernames and identifiers using one-way hashing."""
 
     def __init__(self) -> None:
+        # Track what we've anonymized (for reporting, not for reversal)
         self.username_map: Dict[str, str] = {}
         self.github_id_map: Dict[str, str] = {}
         self.github_username_map: Dict[str, str] = {}
-        self._username_counter = 0
-        self._github_id_counter = 100000
 
     def get_fake_username(self, real_username: str) -> str:
-        """Get or create a fake username for a real username."""
+        """Get a hashed username for a real username."""
         if real_username not in self.username_map:
-            self._username_counter += 1
-            self.username_map[real_username] = f"user{self._username_counter}"
+            self.username_map[real_username] = hash_value(real_username, "USER-")
         return self.username_map[real_username]
 
     def get_fake_github_id(self, real_id: str) -> str:
-        """Get or create a fake GitHub ID for a real ID."""
+        """Get a hashed GitHub ID for a real ID."""
         if real_id not in self.github_id_map:
-            self._github_id_counter += 1
-            self.github_id_map[real_id] = str(self._github_id_counter)
+            self.github_id_map[real_id] = hash_value(real_id, "GHID-")
         return self.github_id_map[real_id]
 
     def get_fake_github_username(self, real_username: str) -> str:
-        """Get or create a fake GitHub username for a real username."""
+        """Get a hashed GitHub username for a real username."""
         if real_username not in self.github_username_map:
-            # Try to use same number as phabricator username if it exists
-            if real_username in self.username_map:
-                num = self.username_map[real_username].replace("user", "")
-                self.github_username_map[real_username] = f"ghuser{num}"
-            else:
-                self._username_counter += 1
-                self.github_username_map[real_username] = f"ghuser{self._username_counter}"
+            self.github_username_map[real_username] = hash_value(real_username, "GHUSER-")
         return self.github_username_map[real_username]
 
     def get_mapping(self) -> Dict[str, Dict[str, str]]:
-        """Get the complete anonymization mapping."""
+        """Get the complete anonymization mapping (for debugging only)."""
         return {
             "usernames": self.username_map,
             "github_ids": self.github_id_map,
             "github_usernames": self.github_username_map,
         }
+
+
+def is_already_anonymized(value: str) -> bool:
+    """Check if a value has already been anonymized (has our prefix)."""
+    return value.startswith(("USER-", "GHID-", "GHUSER-"))
 
 
 def extract_usernames_from_html(content: str) -> Set[str]:
@@ -77,20 +97,25 @@ def extract_usernames_from_html(content: str) -> Set[str]:
 
     # Pattern: href="/p/username/"
     for match in re.finditer(r'href="/p/([^/"]+)/"', content):
-        usernames.add(match.group(1))
+        username = match.group(1)
+        if not is_already_anonymized(username):
+            usernames.add(username)
 
     # Pattern: href="/p/username"
     for match in re.finditer(r'href="/p/([^/"]+)"', content):
-        usernames.add(match.group(1))
+        username = match.group(1)
+        if not is_already_anonymized(username):
+            usernames.add(username)
 
     # Pattern: >username</a> where it's a user link
     for match in re.finditer(r'>([a-zA-Z0-9_-]+)</a>', content):
         username = match.group(1)
-        # Filter out common non-username links
+        # Filter out common non-username links and already anonymized
         if not username.startswith(("H", "PHID-", "tag-")) and len(username) > 1:
-            # Only if it appears in a /p/ link context
-            if f'/p/{username}' in content:
-                usernames.add(username)
+            if not is_already_anonymized(username):
+                # Only if it appears in a /p/ link context
+                if f'/p/{username}' in content:
+                    usernames.add(username)
 
     return usernames
 
@@ -104,18 +129,30 @@ def extract_usernames_from_json(content: str, filename: str) -> Tuple[Set[str], 
     try:
         data = json.loads(content)
 
-        # GraphQL response with GitHub ID
+        # GraphQL response with GitHub ID and primaryUsername
         if "data" in data and data.get("data"):
             profile = data["data"].get("profile", {})
             if profile:
+                # Extract GitHub ID
                 identities = profile.get("identities", {})
                 github_id_obj = identities.get("githubIdV3", {})
                 if github_id_obj and github_id_obj.get("value"):
-                    github_ids.add(github_id_obj["value"])
+                    value = github_id_obj["value"]
+                    if not is_already_anonymized(value):
+                        github_ids.add(value)
+
+                # Extract primaryUsername (Phabricator username)
+                primary_username_obj = profile.get("primaryUsername", {})
+                if primary_username_obj and primary_username_obj.get("value"):
+                    value = primary_username_obj["value"]
+                    if not is_already_anonymized(value):
+                        usernames.add(value)
 
         # REST response with GitHub username
         if "username" in data and data["username"]:
-            github_usernames.add(data["username"])
+            value = data["username"]
+            if not is_already_anonymized(value):
+                github_usernames.add(value)
 
         # Extract username from filename (e.g., mstange_graphql.json -> mstange)
         stem = Path(filename).stem
@@ -123,8 +160,15 @@ def extract_usernames_from_json(content: str, filename: str) -> Tuple[Set[str], 
             if stem.endswith(suffix):
                 username = stem[:-len(suffix)] if suffix else stem
                 if username and not username.startswith("nonexistent"):
-                    usernames.add(username)
+                    if not is_already_anonymized(username):
+                        usernames.add(username)
                 break
+
+        # Also check search_ prefix in filename
+        if stem.startswith("search_"):
+            username = stem[7:]
+            if username and not is_already_anonymized(username):
+                usernames.add(username)
 
     except json.JSONDecodeError:
         pass
@@ -180,22 +224,33 @@ def anonymize_json(content: str, filename: str, anonymizer: Anonymizer) -> str:
         data = json.loads(content)
         modified = False
 
-        # GraphQL response with GitHub ID
+        # GraphQL response with GitHub ID and primaryUsername
         if "data" in data and data.get("data"):
             profile = data["data"].get("profile", {})
             if profile:
+                # Anonymize GitHub ID
                 identities = profile.get("identities", {})
                 github_id_obj = identities.get("githubIdV3", {})
                 if github_id_obj and github_id_obj.get("value"):
                     real_id = github_id_obj["value"]
-                    github_id_obj["value"] = anonymizer.get_fake_github_id(real_id)
-                    modified = True
+                    if not is_already_anonymized(real_id):
+                        github_id_obj["value"] = anonymizer.get_fake_github_id(real_id)
+                        modified = True
+
+                # Anonymize primaryUsername
+                primary_username_obj = profile.get("primaryUsername", {})
+                if primary_username_obj and primary_username_obj.get("value"):
+                    real_username = primary_username_obj["value"]
+                    if not is_already_anonymized(real_username):
+                        primary_username_obj["value"] = anonymizer.get_fake_username(real_username)
+                        modified = True
 
         # REST response with GitHub username
         if "username" in data and data["username"]:
             real_username = data["username"]
-            data["username"] = anonymizer.get_fake_github_username(real_username)
-            modified = True
+            if not is_already_anonymized(real_username):
+                data["username"] = anonymizer.get_fake_github_username(real_username)
+                modified = True
 
         if modified:
             return json.dumps(data, indent=2) + "\n"
@@ -211,22 +266,20 @@ def rename_file_if_needed(filepath: Path, anonymizer: Anonymizer) -> Path:
     stem = filepath.stem
     suffix = filepath.suffix
 
-    # Check for username patterns in filename
-    for real_suffix in ("_graphql", "_rest", ""):
-        if stem.endswith(real_suffix):
-            username_part = stem[:-len(real_suffix)] if real_suffix else stem
+    # Skip if filename already contains anonymized prefix
+    if is_already_anonymized(stem) or stem.startswith("search_USER-"):
+        return filepath
+
+    # Check for username patterns in filename (e.g., username_graphql.json)
+    for file_suffix in ("_graphql", "_rest", ""):
+        if stem.endswith(file_suffix):
+            username_part = stem[:-len(file_suffix)] if file_suffix else stem
             if username_part in anonymizer.username_map:
                 fake_username = anonymizer.username_map[username_part]
-                new_stem = fake_username + real_suffix
+                new_stem = fake_username + file_suffix
                 return filepath.parent / (new_stem + suffix)
-            elif username_part in anonymizer.github_username_map:
-                # For people fixtures, use the mapped username
-                for real_name, fake_name in anonymizer.username_map.items():
-                    if stem.startswith(real_name):
-                        new_stem = stem.replace(real_name, fake_name)
-                        return filepath.parent / (new_stem + suffix)
 
-    # Check for search_ prefix
+    # Check for search_ prefix (e.g., search_username.html)
     if stem.startswith("search_"):
         username = stem[7:]  # Remove "search_" prefix
         if username in anonymizer.username_map:
@@ -240,7 +293,7 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
     """Process all fixture files and anonymize PII."""
     anonymizer = Anonymizer()
 
-    # First pass: collect all usernames
+    # First pass: collect all usernames from content and filenames
     if verbose:
         print("Pass 1: Collecting usernames...")
 
@@ -251,9 +304,17 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
         content = filepath.read_text()
 
         if filepath.suffix == ".html":
+            # Extract usernames from HTML content
             usernames = extract_usernames_from_html(content)
             for username in usernames:
                 anonymizer.get_fake_username(username)
+
+            # Also check for usernames in HTML filenames (search_ prefix)
+            stem = filepath.stem
+            if stem.startswith("search_"):
+                username = stem[7:]
+                if username and not is_already_anonymized(username):
+                    anonymizer.get_fake_username(username)
 
         elif filepath.suffix == ".json":
             usernames, github_ids, github_usernames = extract_usernames_from_json(
@@ -276,6 +337,7 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
         print("\nPass 2: Anonymizing content...")
 
     files_to_rename = []
+    modified_count = 0
 
     for filepath in FIXTURES_DIR.rglob("*"):
         if not filepath.is_file():
@@ -294,6 +356,7 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
             continue
 
         if content != new_content:
+            modified_count += 1
             if verbose:
                 print(f"  Modified: {filepath.relative_to(FIXTURES_DIR.parent.parent)}")
 
@@ -305,22 +368,37 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
         if new_path != filepath:
             files_to_rename.append((filepath, new_path))
 
-    # Rename files (after content is modified)
-    if verbose and files_to_rename:
-        print("\nFiles to rename:")
+    if verbose:
+        if modified_count == 0:
+            print("  No files needed content modification")
+
+    # Third pass: rename files (after content is modified)
+    if verbose:
+        print("\nPass 3: Renaming files...")
+        if not files_to_rename:
+            print("  No files need renaming")
 
     for old_path, new_path in files_to_rename:
         if verbose:
             print(f"  {old_path.name} -> {new_path.name}")
         if not dry_run:
+            # Ensure we don't overwrite existing files
+            if new_path.exists():
+                print(f"  WARNING: {new_path.name} already exists, skipping rename")
+                continue
             old_path.rename(new_path)
+
+    if verbose:
+        print(f"\nSummary:")
+        print(f"  Files modified: {modified_count}")
+        print(f"  Files renamed: {len(files_to_rename)}")
 
     return anonymizer
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Anonymize PII in test fixtures",
+        description="Anonymize PII in test fixtures using one-way hashing",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -328,10 +406,6 @@ def main():
         "--dry-run",
         action="store_true",
         help="Show what would change without modifying files",
-    )
-    parser.add_argument(
-        "--save-mapping",
-        help="Save anonymization mapping to file (DO NOT COMMIT)",
     )
     parser.add_argument(
         "--quiet", "-q",
@@ -344,14 +418,7 @@ def main():
     if args.dry_run:
         print("=== DRY RUN - No files will be modified ===\n")
 
-    anonymizer = process_fixtures(dry_run=args.dry_run, verbose=not args.quiet)
-
-    if args.save_mapping:
-        mapping = anonymizer.get_mapping()
-        with open(args.save_mapping, "w") as f:
-            json.dump(mapping, f, indent=2)
-        print(f"\nMapping saved to: {args.save_mapping}")
-        print("WARNING: Do NOT commit this file - it contains the real-to-fake mapping!")
+    process_fixtures(dry_run=args.dry_run, verbose=not args.quiet)
 
     if args.dry_run:
         print("\n=== DRY RUN COMPLETE - Run without --dry-run to apply changes ===")

@@ -71,10 +71,10 @@ def update_test_people_client(content: str) -> Tuple[str, List[str]]:
                 # Nonexistent user should return None
                 assert extract_github_id(data) is None
             else:
-                # Real users should have a GitHub ID (string of digits)
+                # Real users should have a GitHub ID (anonymized with GHID- prefix)
                 github_id = extract_github_id(data)
                 if github_id is not None:
-                    assert github_id.isdigit(), f"GitHub ID should be numeric: {github_id}"
+                    assert github_id.startswith("GHID-"), f"GitHub ID should have GHID- prefix: {github_id}"
                     found_valid = True
 
         assert found_valid, "At least one fixture should have a valid GitHub ID"
@@ -99,9 +99,9 @@ def update_test_people_client(content: str) -> Tuple[str, List[str]]:
         for username, data in rest_fixtures.items():
             github_username = extract_github_username(data)
             if github_username is not None:
-                # GitHub usernames should be non-empty strings
+                # GitHub usernames should be anonymized with GHUSER- prefix
                 assert isinstance(github_username, str)
-                assert len(github_username) > 0
+                assert github_username.startswith("GHUSER-"), f"GitHub username should have GHUSER- prefix: {github_username}"
                 found_valid = True
 
         assert found_valid, "At least one fixture should have a valid GitHub username"
@@ -140,8 +140,11 @@ def update_test_parsers(content: str) -> Tuple[str, List[str]]:
     """Update test_parsers.py to be PII-independent.
 
     Changes:
+    - Remove author field from test_parse_rule_fixture expected dicts
+    - Change expected_members lists to member_count integers
+    - Update test_extract_members_from_timeline to use count-based assertions
     - Remove EXPECTED_MEMBERS dict with hardcoded usernames
-    - Update tests to verify member extraction without checking specific names
+    - Remove test_extract_members_exact test
 
     Returns:
         Tuple of (new_content, list_of_changes)
@@ -149,33 +152,91 @@ def update_test_parsers(content: str) -> Tuple[str, List[str]]:
     changes = []
     result = content
 
-    # Remove the EXPECTED_MEMBERS dict entirely and replace with count-only dict
-    # Find the EXPECTED_MEMBERS definition
-    expected_members_pattern = r'(\s+)EXPECTED_MEMBERS = \{[^}]+(?:\{[^}]+\}[^}]*)*\}'
+    # 1. Remove "author": "..." lines from test_parse_rule_fixture expected dicts
+    author_pattern = r'\s*"author": "[^"]+",\n'
+    if re.search(author_pattern, result):
+        result = re.sub(author_pattern, '\n', result)
+        changes.append("Removed author from test_parse_rule_fixture expected dicts")
 
-    match = re.search(expected_members_pattern, content, re.DOTALL)
-    if match:
-        indent = match.group(1)
-        # Replace with a comment explaining the change
-        replacement = f'''{indent}# Member lists are not checked by name to avoid PII in tests.
-{indent}# Instead, we verify that the expected number of members are extracted.
-{indent}# The EXPECTED_MEMBER_COUNTS dict below defines expected counts per group.'''
+    # 2. Update the author assertion to check pattern instead of exact value
+    # Use str.replace to avoid regex escaping issues
+    old_author_line = 'assert author == expected["author"], f"Author mismatch: got \'{author}\', expected \'{expected[\'author\']}\'"'
+    new_author_lines = '''# Author is anonymized - just verify it exists and matches pattern
+        assert author is not None, "Author should not be None"
+        assert author.startswith("USER-"), f"Author should be anonymized with USER- prefix, got '{author}'"'''
+    if old_author_line in result:
+        result = result.replace(old_author_line, new_author_lines)
+        changes.append("Updated author assertion to check USER- prefix pattern")
 
-        result = re.sub(expected_members_pattern, replacement, result, flags=re.DOTALL)
-        changes.append("Removed EXPECTED_MEMBERS dict with hardcoded usernames")
+    # 3. Convert "expected_members": ["name1", "name2", ...] to "member_count": N
+    def replace_expected_members(match: re.Match) -> str:
+        members_str = match.group(1)
+        count = len(re.findall(r'"[^"]+"', members_str))
+        return f'"member_count": {count}'
 
-    # Update test_parse_group_members to not check specific names
-    # Find the test method and update its assertions
-    old_assertion = r'assert sorted\(group\.members\) == sorted\(self\.EXPECTED_MEMBERS\[group_slug\]\)'
-    new_assertion = 'assert len(group.members) == expected_count, f"Expected {expected_count} members, got {len(group.members)}"'
+    expected_members_pattern = r'"expected_members": \[([^\]]*)\]'
+    if re.search(expected_members_pattern, result):
+        result = re.sub(expected_members_pattern, replace_expected_members, result)
+        changes.append("Changed expected_members to member_count")
 
-    if re.search(old_assertion, result):
-        result = re.sub(old_assertion, new_assertion, result)
-        changes.append("Updated test_parse_group_members to check count instead of names")
+    # 4. Update the assertion logic for expected_members -> member_count
+    old_members_check = '''if "expected_members" in expected:
+            # Check exact member list (sorted for comparison)
+            assert sorted(info["members"]) == sorted(expected["expected_members"]), \\
+                f"Members mismatch: got {sorted(info['members'])}, expected {sorted(expected['expected_members'])}"'''
+    new_members_check = '''if "member_count" in expected:
+            # Check member count (names are anonymized with USER- prefix)
+            assert len(info["members"]) == expected["member_count"], \\
+                f"Member count mismatch: got {len(info['members'])}, expected {expected['member_count']}"'''
+    if old_members_check in result:
+        result = result.replace(old_members_check, new_members_check)
+        changes.append("Updated member assertion to check count instead of exact names")
 
-    # Also update any other places that reference EXPECTED_MEMBERS
+    # 5. Update test_extract_members_from_timeline to use count-based assertions
+    # Find and replace the specific username assertions
+    old_timeline_block = '''        # Based on timeline analysis of omc-reviewers fixture:
+        # - Created by zeid_admin
+        # - beth removed herself (but was never added in visible timeline)
+        # - aminomancer added yozhang, then removed yozhang
+        # - aminomancer added lsmith
+        # - hanna_a added mviar
+        # - mviar added sachung
+        # - aminomancer removed pdahiya and Mardak (but they were never added in visible timeline)
+        # Note: aminomancer is the actor (adds others), not a member
+        # Current members based on timeline: lsmith, mviar, sachung
+        assert isinstance(members, list)
+        assert "lsmith" in members
+        assert "mviar" in members
+        assert "sachung" in members
+        # These should NOT be in members (removed or never added)
+        assert "aminomancer" not in members  # Actor, not member
+        assert "yozhang" not in members  # Added then removed
+        assert "pdahiya" not in members  # Removed
+        assert "Mardak" not in members  # Removed'''
+    new_timeline_block = '''        # Verify member extraction works (names are anonymized with USER- prefix)
+        assert isinstance(members, list)
+        # Based on timeline, should have 3 current members
+        assert len(members) == 3, f"Expected 3 members from timeline, got {len(members)}"
+        # All members should be anonymized with USER- prefix
+        for member in members:
+            assert member.startswith("USER-"), f"Member should have USER- prefix, got '{member}'"'''
+    if old_timeline_block in result:
+        result = result.replace(old_timeline_block, new_timeline_block)
+        changes.append("Updated test_extract_members_from_timeline to use count-based assertions")
+
+    # 6. Remove test_extract_members_exact test entirely
+    test_exact_pattern = (
+        r'\n    @pytest\.mark\.parametrize\("group_slug", \[\s*'
+        r'[^\]]+\]\)\s*'
+        r'def test_extract_members_exact\(self[^)]*\):.*?'
+        r'(?=\n    (?:@|def )|$)'
+    )
+    if re.search(test_exact_pattern, result, re.DOTALL):
+        result = re.sub(test_exact_pattern, '', result, flags=re.DOTALL)
+        changes.append("Removed test_extract_members_exact test")
+
+    # 7. Update remaining EXPECTED_MEMBERS references
     if 'self.EXPECTED_MEMBERS' in result:
-        # Remove any remaining references
         result = re.sub(r'self\.EXPECTED_MEMBERS\[[^\]]+\]', '[]', result)
         changes.append("Removed remaining EXPECTED_MEMBERS references")
 
