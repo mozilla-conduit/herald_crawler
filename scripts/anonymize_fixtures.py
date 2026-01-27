@@ -117,6 +117,29 @@ def extract_usernames_from_html(content: str) -> Set[str]:
                 if f'/p/{username}' in content:
                     usernames.add(username)
 
+    # Pattern: title="username (Real Name)" - extract username from title attributes
+    # Use [^"]+ to match everything until the closing quote (handles nested parens)
+    for match in re.finditer(r'title="([a-zA-Z0-9_-]+) \([^"]+\)"', content):
+        username = match.group(1)
+        if not is_already_anonymized(username):
+            usernames.add(username)
+
+    # Pattern: title="username" (simple title)
+    for match in re.finditer(r'title="([a-zA-Z0-9_-]+)"', content):
+        username = match.group(1)
+        # Filter out non-usernames
+        if len(username) > 1 and not is_already_anonymized(username):
+            # Only if it looks like a username (appears in /p/ context or title with parens)
+            if f'/p/{username}' in content or f'title="{username} (' in content:
+                usernames.add(username)
+
+    # Pattern: >username (Real Name)</a> - username with real name in link text
+    # Use [^<]+ to match everything until the closing tag (handles nested parens)
+    for match in re.finditer(r'>([a-zA-Z0-9_-]+) \([^<]+\)</a>', content):
+        username = match.group(1)
+        if not is_already_anonymized(username):
+            usernames.add(username)
+
     return usernames
 
 
@@ -154,7 +177,7 @@ def extract_usernames_from_json(content: str, filename: str) -> Tuple[Set[str], 
             if not is_already_anonymized(value):
                 github_usernames.add(value)
 
-        # Extract username from filename (e.g., mstange_graphql.json -> mstange)
+        # Extract username from filename (e.g., username_graphql.json -> username)
         stem = Path(filename).stem
         for suffix in ("_graphql", "_rest", ""):
             if stem.endswith(suffix):
@@ -208,10 +231,96 @@ def anonymize_html(content: str, anonymizer: Anonymizer) -> str:
             result
         )
 
-        # Replace username in title attributes
+        # Replace title="username (Real Name)" - anonymize both username and real name
+        # Use [^"]+ to handle nested parentheses
+        result = re.sub(
+            rf'title="{re.escape(username)} \([^"]+\)"',
+            f'title="{fake_username}"',
+            result
+        )
+
+        # Replace title="username" (simple)
         result = re.sub(
             rf'title="{re.escape(username)}"',
             f'title="{fake_username}"',
+            result
+        )
+
+        # Replace >username (Real Name)</a> - anonymize username and real name in link text
+        # Use [^<]+ to handle nested parentheses
+        result = re.sub(
+            rf'>{re.escape(username)} \([^<]+\)</a>',
+            f'>{fake_username}</a>',
+            result
+        )
+
+        # Replace "Log Out username" patterns
+        result = re.sub(
+            rf'Log Out {re.escape(username)}',
+            f'Log Out {fake_username}',
+            result
+        )
+
+    return result
+
+
+def extract_usernames_from_markdown(content: str) -> Set[str]:
+    """Extract usernames from Markdown content."""
+    usernames = set()
+
+    # Pattern: [username](url) - markdown links
+    for match in re.finditer(r'\[([a-zA-Z0-9_-]+)\]\([^)]+\)', content):
+        username = match.group(1)
+        if not is_already_anonymized(username):
+            usernames.add(username)
+
+    # Pattern: @username - mentions
+    for match in re.finditer(r'@([a-zA-Z0-9_-]+)', content):
+        username = match.group(1)
+        if not is_already_anonymized(username):
+            usernames.add(username)
+
+    # Pattern: username in backticks `username`
+    for match in re.finditer(r'`([a-zA-Z0-9_-]+)`', content):
+        username = match.group(1)
+        if not is_already_anonymized(username):
+            usernames.add(username)
+
+    return usernames
+
+
+def anonymize_markdown(content: str, anonymizer: Anonymizer) -> str:
+    """Anonymize usernames in Markdown content."""
+    result = content
+
+    # Get all usernames first
+    usernames = extract_usernames_from_markdown(content)
+
+    # Sort by length (longest first) to avoid partial replacements
+    for username in sorted(usernames, key=len, reverse=True):
+        if username not in anonymizer.username_map:
+            continue  # Only anonymize known usernames
+
+        fake_username = anonymizer.get_fake_username(username)
+
+        # Replace [username](url) - markdown links
+        result = re.sub(
+            rf'\[{re.escape(username)}\](\([^)]+\))',
+            f'[{fake_username}]\\1',
+            result
+        )
+
+        # Replace @username - mentions
+        result = re.sub(
+            rf'@{re.escape(username)}(?![a-zA-Z0-9_-])',
+            f'@{fake_username}',
+            result
+        )
+
+        # Replace `username` - backticks
+        result = re.sub(
+            rf'`{re.escape(username)}`',
+            f'`{fake_username}`',
             result
         )
 
@@ -289,7 +398,7 @@ def rename_file_if_needed(filepath: Path, anonymizer: Anonymizer) -> Path:
     return filepath
 
 
-def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
+def process_fixtures(dry_run: bool = True, verbose: bool = True, force: bool = False) -> Anonymizer:
     """Process all fixture files and anonymize PII."""
     anonymizer = Anonymizer()
 
@@ -327,6 +436,12 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
             for gh_username in github_usernames:
                 anonymizer.get_fake_github_username(gh_username)
 
+        elif filepath.suffix == ".md":
+            # Extract usernames from Markdown content
+            usernames = extract_usernames_from_markdown(content)
+            for username in usernames:
+                anonymizer.get_fake_username(username)
+
     if verbose:
         print(f"  Found {len(anonymizer.username_map)} usernames")
         print(f"  Found {len(anonymizer.github_id_map)} GitHub IDs")
@@ -352,6 +467,8 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
             new_content = anonymize_html(content, anonymizer)
         elif filepath.suffix == ".json":
             new_content = anonymize_json(content, filepath.name, anonymizer)
+        elif filepath.suffix == ".md":
+            new_content = anonymize_markdown(content, anonymizer)
         else:
             continue
 
@@ -382,10 +499,14 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True) -> Anonymizer:
         if verbose:
             print(f"  {old_path.name} -> {new_path.name}")
         if not dry_run:
-            # Ensure we don't overwrite existing files
             if new_path.exists():
-                print(f"  WARNING: {new_path.name} already exists, skipping rename")
-                continue
+                if force:
+                    if verbose:
+                        print(f"    (overwriting existing file)")
+                    new_path.unlink()
+                else:
+                    print(f"  WARNING: {new_path.name} already exists, skipping (use --force to overwrite)")
+                    continue
             old_path.rename(new_path)
 
     if verbose:
@@ -408,6 +529,11 @@ def main():
         help="Show what would change without modifying files",
     )
     parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="Overwrite existing files when renaming",
+    )
+    parser.add_argument(
         "--quiet", "-q",
         action="store_true",
         help="Suppress verbose output",
@@ -418,7 +544,7 @@ def main():
     if args.dry_run:
         print("=== DRY RUN - No files will be modified ===\n")
 
-    process_fixtures(dry_run=args.dry_run, verbose=not args.quiet)
+    process_fixtures(dry_run=args.dry_run, verbose=not args.quiet, force=args.force)
 
     if args.dry_run:
         print("\n=== DRY RUN COMPLETE - Run without --dry-run to apply changes ===")

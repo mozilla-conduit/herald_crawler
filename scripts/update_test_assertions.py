@@ -26,7 +26,7 @@ def update_test_people_client(content: str) -> Tuple[str, List[str]]:
     """Update test_people_client.py to be PII-independent.
 
     Changes:
-    - Remove specific fixture name tests (mstange, florian, dao)
+    - Remove specific fixture name tests (use generic fixtures)
     - Replace with generic fixture tests
     - Remove hardcoded GitHub ID/username assertions
 
@@ -193,26 +193,8 @@ def update_test_parsers(content: str) -> Tuple[str, List[str]]:
         changes.append("Updated member assertion to check count instead of exact names")
 
     # 5. Update test_extract_members_from_timeline to use count-based assertions
-    # Find and replace the specific username assertions
-    old_timeline_block = '''        # Based on timeline analysis of omc-reviewers fixture:
-        # - Created by zeid_admin
-        # - beth removed herself (but was never added in visible timeline)
-        # - aminomancer added yozhang, then removed yozhang
-        # - aminomancer added lsmith
-        # - hanna_a added mviar
-        # - mviar added sachung
-        # - aminomancer removed pdahiya and Mardak (but they were never added in visible timeline)
-        # Note: aminomancer is the actor (adds others), not a member
-        # Current members based on timeline: lsmith, mviar, sachung
-        assert isinstance(members, list)
-        assert "lsmith" in members
-        assert "mviar" in members
-        assert "sachung" in members
-        # These should NOT be in members (removed or never added)
-        assert "aminomancer" not in members  # Actor, not member
-        assert "yozhang" not in members  # Added then removed
-        assert "pdahiya" not in members  # Removed
-        assert "Mardak" not in members  # Removed'''
+    # Note: The old pattern has been removed as fixtures are now anonymized.
+    # This step is kept for documentation purposes.
     new_timeline_block = '''        # Verify member extraction works (names are anonymized with USER- prefix)
         assert isinstance(members, list)
         # Based on timeline, should have 3 current members
@@ -220,9 +202,7 @@ def update_test_parsers(content: str) -> Tuple[str, List[str]]:
         # All members should be anonymized with USER- prefix
         for member in members:
             assert member.startswith("USER-"), f"Member should have USER- prefix, got '{member}'"'''
-    if old_timeline_block in result:
-        result = result.replace(old_timeline_block, new_timeline_block)
-        changes.append("Updated test_extract_members_from_timeline to use count-based assertions")
+    # Pattern matching removed - test file already anonymized
 
     # 6. Remove test_extract_members_exact test entirely
     test_exact_pattern = (
@@ -235,10 +215,45 @@ def update_test_parsers(content: str) -> Tuple[str, List[str]]:
         result = re.sub(test_exact_pattern, '', result, flags=re.DOTALL)
         changes.append("Removed test_extract_members_exact test")
 
-    # 7. Update remaining EXPECTED_MEMBERS references
+    # 7. Remove the entire EXPECTED_MEMBERS dict (multi-line)
+    # Match from comment line through the closing brace
+    # The dict ends with "    }\n" (4 spaces + } + newline)
+    expected_members_dict_pattern = (
+        r'    # Expected members for each group fixture[^\n]*\n'
+        r'    EXPECTED_MEMBERS = \{.*?\n    \}\n'
+    )
+    if re.search(expected_members_dict_pattern, result, re.DOTALL):
+        result = re.sub(expected_members_dict_pattern, '', result, flags=re.DOTALL)
+        changes.append("Removed EXPECTED_MEMBERS dict with hardcoded usernames")
+
+    # 8. Update remaining EXPECTED_MEMBERS references
     if 'self.EXPECTED_MEMBERS' in result:
         result = re.sub(r'self\.EXPECTED_MEMBERS\[[^\]]+\]', '[]', result)
         changes.append("Removed remaining EXPECTED_MEMBERS references")
+
+    # 9. Remove comments that contain usernames (PII)
+    # Pattern: # Note: username is the actor...
+    result = re.sub(
+        r'\s*# Note: [a-zA-Z0-9_-]+ is the actor[^\n]*\n',
+        '\n',
+        result
+    )
+    # Pattern: comments mentioning specific users in timeline analysis
+    result = re.sub(
+        r'\s*# - [a-zA-Z0-9_-]+ (added|removed|created)[^\n]*\n',
+        '',
+        result
+    )
+    # Pattern: # Current members based on timeline: user1, user2, ...
+    result = re.sub(
+        r'\s*# Current members based on timeline:[^\n]*\n',
+        '',
+        result
+    )
+    # Check if any PII-containing comments were removed
+    if re.search(r'# - [a-zA-Z0-9_-]+ (added|removed|created)', content) and \
+       not re.search(r'# - [a-zA-Z0-9_-]+ (added|removed|created)', result):
+        changes.append("Removed comments containing usernames")
 
     return result, changes
 
