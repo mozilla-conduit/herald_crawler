@@ -319,6 +319,111 @@ class TestRuleDetailPageParser:
                         break
             assert has_blocking, f"Expected blocking reviewers but found none"
 
+    def test_extract_handle_info_detects_user_vs_group(self):
+        """Test that _extract_handle_info correctly identifies users vs groups from href."""
+        from herald_scraper.parsers import HandleInfo
+
+        # HTML with both user and group links
+        html = """
+        <html>
+        <body>
+        <div class="herald-list-item">
+            Add reviewers:
+            <a href="/tag/omc-reviewers/" class="phui-handle">omc-reviewers</a>,
+            <a href="/p/alice/" class="phui-handle">alice</a>,
+            <a href="/tag/android-reviewers/" class="phui-handle">android-reviewers</a>,
+            <a href="/p/bob/" class="phui-handle">bob</a>
+        </div>
+        </body>
+        </html>
+        """
+        parser = RuleDetailPageParser(html)
+        div = parser.soup.find("div", class_="herald-list-item")
+        handles = parser._extract_handle_info(div)
+
+        assert len(handles) == 4
+
+        # Check omc-reviewers is detected as group
+        omc = next(h for h in handles if h.name == "omc-reviewers")
+        assert omc.is_group is True
+
+        # Check alice is detected as user
+        alice = next(h for h in handles if h.name == "alice")
+        assert alice.is_group is False
+
+        # Check android-reviewers is detected as group
+        android = next(h for h in handles if h.name == "android-reviewers")
+        assert android.is_group is True
+
+        # Check bob is detected as user
+        bob = next(h for h in handles if h.name == "bob")
+        assert bob.is_group is False
+
+    def test_parse_action_with_user_reviewers(self):
+        """Test that actions with user reviewers (not groups) set is_group correctly."""
+        # HTML with user reviewers
+        html = """
+        <html>
+        <body>
+        <p class="herald-list-description">Take these actions every time this rule matches:</p>
+        <div class="herald-list-item">
+            Add reviewers:
+            <a href="/p/shtrom/" class="phui-handle">shtrom</a>,
+            <a href="/p/zeid/" class="phui-handle">zeid</a>
+        </div>
+        </body>
+        </html>
+        """
+        parser = RuleDetailPageParser(html)
+        actions = parser._extract_actions()
+
+        assert len(actions) == 1
+        assert actions[0].type == "add-reviewers"
+        assert actions[0].reviewers is not None
+        assert len(actions[0].reviewers) == 2
+
+        # Check that reviewers are marked as users (is_group=False)
+        shtrom = next((r for r in actions[0].reviewers if r.target == "shtrom"), None)
+        assert shtrom is not None
+        assert shtrom.is_group is False
+
+        zeid = next((r for r in actions[0].reviewers if r.target == "zeid"), None)
+        assert zeid is not None
+        assert zeid.is_group is False
+
+    def test_parse_action_with_mixed_users_and_groups(self):
+        """Test that actions with both users and groups set is_group correctly."""
+        html = """
+        <html>
+        <body>
+        <p class="herald-list-description">Take these actions every time this rule matches:</p>
+        <div class="herald-list-item">
+            Add blocking reviewers:
+            <a href="/tag/omc-reviewers/" class="phui-handle">omc-reviewers</a>,
+            <a href="/p/alice/" class="phui-handle">alice</a>
+        </div>
+        </body>
+        </html>
+        """
+        parser = RuleDetailPageParser(html)
+        actions = parser._extract_actions()
+
+        assert len(actions) == 1
+        assert actions[0].type == "add-reviewers"
+        reviewers = actions[0].reviewers
+
+        # omc-reviewers should be marked as a group
+        omc = next((r for r in reviewers if r.target == "omc-reviewers"), None)
+        assert omc is not None
+        assert omc.is_group is True
+        assert omc.blocking is True
+
+        # alice should be marked as a user
+        alice = next((r for r in reviewers if r.target == "alice"), None)
+        assert alice is not None
+        assert alice.is_group is False
+        assert alice.blocking is True
+
 
 class TestProjectPageParser:
     """Tests for ProjectPageParser."""

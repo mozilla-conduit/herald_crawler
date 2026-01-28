@@ -18,6 +18,7 @@ class Reviewer(BaseModel):
     """Represents a reviewer in an action."""
     target: str = Field(..., description="Username, email, or group name")
     blocking: bool = Field(default=False, description="Whether this is a blocking reviewer")
+    is_group: Optional[bool] = Field(default=None, description="True if target is a group/project, False if user, None if unknown")
     github_username: Optional[str] = Field(default=None, description="Resolved GitHub username")
     github_user_id: Optional[int] = Field(default=None, description="Resolved GitHub numeric user ID")
 

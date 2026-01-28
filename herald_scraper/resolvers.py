@@ -31,7 +31,9 @@ class GroupCollector:
         """
         Extract unique group slugs from rule reviewer actions.
 
-        Groups are identified by not containing '@' (users have email addresses).
+        Groups are identified by the is_group field set by the parser (based on
+        href pattern: /tag/ = group, /p/ = user). Falls back to '@' heuristic
+        if is_group is None.
 
         Args:
             rules: List of Rule objects to extract groups from
@@ -45,10 +47,14 @@ class GroupCollector:
             for action in rule.actions:
                 if action.reviewers:
                     for reviewer in action.reviewers:
-                        target = reviewer.target
-                        # Groups don't have '@' in their name (users have emails)
-                        if "@" not in target:
-                            group_slugs.add(target)
+                        # Use is_group field if available
+                        if reviewer.is_group is True:
+                            group_slugs.add(reviewer.target)
+                        elif reviewer.is_group is None:
+                            # Fallback: assume it's a group if no '@' (legacy behavior)
+                            if "@" not in reviewer.target:
+                                group_slugs.add(reviewer.target)
+                        # is_group == False means it's a user, skip
 
         logger.debug(f"Extracted {len(group_slugs)} unique group slugs from {len(rules)} rules")
         return group_slugs
@@ -199,6 +205,10 @@ class UsernameResolver:
         """
         Extract unique usernames from rules, excluding group names.
 
+        Users are identified by:
+        - is_group == False (set by parser based on /p/ href)
+        - Contains '@' (email format like user@domain)
+
         Args:
             rules: List of Rule objects to extract usernames from
             group_slugs: Set of known group slugs to exclude
@@ -209,9 +219,9 @@ class UsernameResolver:
         username_refs: Dict[str, List[str]] = {}
 
         for rule in rules:
-            # Rule author
+            # Rule author (always treat as user if present)
             author = rule.author
-            if author and "@" in author:  # Users have email-like format
+            if author:
                 if author not in username_refs:
                     username_refs[author] = []
                 username_refs[author].append(rule.id)
@@ -221,11 +231,17 @@ class UsernameResolver:
                 if action.reviewers:
                     for reviewer in action.reviewers:
                         target = reviewer.target
-                        # Skip groups (no @ and in group_slugs)
+
+                        # Skip if explicitly marked as a group
+                        if reviewer.is_group is True:
+                            continue
+
+                        # Skip if in known group_slugs (from fallback logic)
                         if target in group_slugs:
                             continue
-                        # Users have @ in their name (email format)
-                        if "@" in target:
+
+                        # Include if explicitly marked as a user, or has '@'
+                        if reviewer.is_group is False or "@" in target:
                             if target not in username_refs:
                                 username_refs[target] = []
                             username_refs[target].append(rule.id)

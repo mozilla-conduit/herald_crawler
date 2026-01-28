@@ -2,9 +2,15 @@
 
 import logging
 import re
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, NamedTuple
 from bs4 import BeautifulSoup, Tag
 from herald_scraper.models import Rule, Condition, Action, Reviewer
+
+
+class HandleInfo(NamedTuple):
+    """Information extracted from a phui-handle link."""
+    name: str
+    is_group: Optional[bool]  # True for /tag/, False for /p/, None if unknown
 
 logger = logging.getLogger(__name__)
 
@@ -387,17 +393,38 @@ class RuleDetailPageParser:
 
     def _extract_handle_names(self, element: Tag) -> List[str]:
         """Extract names from phui-handle links within an element."""
-        names: List[str] = []
+        return [info.name for info in self._extract_handle_info(element)]
+
+    def _extract_handle_info(self, element: Tag) -> List[HandleInfo]:
+        """Extract names and type info from phui-handle links within an element.
+
+        Determines if target is a group (project) or user based on the href:
+        - /tag/{slug}/ = group/project (is_group=True)
+        - /p/{username}/ = user (is_group=False)
+        """
+        handles: List[HandleInfo] = []
         for link in element.find_all("a", class_="phui-handle"):
             # Get the text of the link (e.g., "rMOZILLACENTRAL mozilla-central")
             link_text = link.get_text(strip=True)
             # For repository links, extract just the readable name
             # Format is "rSHORTNAME readable-name"
             if " " in link_text:
-                names.append(link_text.split(" ", 1)[1])
+                name = link_text.split(" ", 1)[1]
             else:
-                names.append(link_text)
-        return names
+                name = link_text
+
+            # Determine if it's a group or user from the href
+            href = link.get("href", "")
+            if href.startswith("/tag/"):
+                is_group = True
+            elif href.startswith("/p/"):
+                is_group = False
+            else:
+                # Unknown type - fall back to heuristic (contains @ = user)
+                is_group = None
+
+            handles.append(HandleInfo(name=name, is_group=is_group))
+        return handles
 
     def _extract_regexp_pattern(self, text: str) -> Optional[str]:
         """Extract regexp pattern from condition text.
@@ -451,10 +478,10 @@ class RuleDetailPageParser:
 
         # Add blocking reviewers
         if "Add blocking reviewers:" in text:
-            reviewer_names = self._extract_handle_names(item)
+            handle_info = self._extract_handle_info(item)
             reviewers = [
-                Reviewer(target=name, blocking=True)
-                for name in reviewer_names
+                Reviewer(target=info.name, blocking=True, is_group=info.is_group)
+                for info in handle_info
             ]
             return Action(
                 type="add-reviewers",
@@ -463,10 +490,10 @@ class RuleDetailPageParser:
 
         # Add (non-blocking) reviewers
         if text.startswith("Add reviewers:") and "blocking" not in text.lower():
-            reviewer_names = self._extract_handle_names(item)
+            handle_info = self._extract_handle_info(item)
             reviewers = [
-                Reviewer(target=name, blocking=False)
-                for name in reviewer_names
+                Reviewer(target=info.name, blocking=False, is_group=info.is_group)
+                for info in handle_info
             ]
             return Action(
                 type="add-reviewers",

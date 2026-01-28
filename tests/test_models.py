@@ -105,6 +105,7 @@ class TestReviewer:
         assert data == {
             "target": "user@example.com",
             "blocking": True,
+            "is_group": None,
             "github_username": None,
             "github_user_id": None,
         }
