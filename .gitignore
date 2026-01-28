@@ -11,7 +11,8 @@ build/
 *.egg
 .mypy_cache/
 .ruff_cache/
-herald_rules.json
+herald_rules.json*
+anon.*.map
 
 # Anonymization files (contain PII mappings - DO NOT COMMIT)
 anonymization_mapping.json
