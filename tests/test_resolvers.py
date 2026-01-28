@@ -467,10 +467,11 @@ class TestUsernameResolver:
         from herald_scraper.people_client import GitHubResolution
         mock_people_client.resolve_github.return_value = GitHubResolution(username="alice-gh", user_id=12345)
 
-        username, user_id = resolver.resolve_username("alice@mozilla.com")
+        github_user = resolver.resolve_username("alice@mozilla.com")
 
-        assert username == "alice-gh"
-        assert user_id == 12345
+        assert github_user is not None
+        assert github_user.username == "alice-gh"
+        assert github_user.user_id == 12345
         mock_people_client.resolve_github.assert_called_once_with("alice")
 
     def test_resolve_username_not_found(self, resolver, mock_people_client):
@@ -478,10 +479,9 @@ class TestUsernameResolver:
         from herald_scraper.people_client import GitHubResolution
         mock_people_client.resolve_github.return_value = GitHubResolution(username=None, user_id=None)
 
-        username, user_id = resolver.resolve_username("unknown@mozilla.com")
+        github_user = resolver.resolve_username("unknown@mozilla.com")
 
-        assert username is None
-        assert user_id is None
+        assert github_user is None
         assert "unknown" in resolver._unresolved
 
     def test_resolve_username_caching(self, resolver, mock_people_client):
@@ -490,12 +490,12 @@ class TestUsernameResolver:
         mock_people_client.resolve_github.return_value = GitHubResolution(username="alice-gh", user_id=12345)
 
         # First call
-        username1, user_id1 = resolver.resolve_username("alice@mozilla.com")
+        github_user1 = resolver.resolve_username("alice@mozilla.com")
         # Second call (should use cache)
-        username2, user_id2 = resolver.resolve_username("alice@mozilla.com")
+        github_user2 = resolver.resolve_username("alice@mozilla.com")
 
-        assert username1 == username2 == "alice-gh"
-        assert user_id1 == user_id2 == 12345
+        assert github_user1.username == github_user2.username == "alice-gh"
+        assert github_user1.user_id == github_user2.user_id == 12345
         # Client should only be called once
         mock_people_client.resolve_github.assert_called_once()
 
@@ -503,10 +503,9 @@ class TestUsernameResolver:
         """Test handling API errors during resolution."""
         mock_people_client.resolve_github.side_effect = Exception("API error")
 
-        username, user_id = resolver.resolve_username("error@mozilla.com")
+        github_user = resolver.resolve_username("error@mozilla.com")
 
-        assert username is None
-        assert user_id is None
+        assert github_user is None
         assert "error" in resolver._unresolved
         assert "API error" in resolver._unresolved["error"]
 
@@ -519,14 +518,14 @@ class TestUsernameResolver:
 
         mock_people_client.resolve_github.side_effect = mock_resolve
 
-        resolved_usernames, resolved_user_ids, unresolved = resolver.resolve_all(
+        github_users, unresolved = resolver.resolve_all(
             sample_rules, sample_groups, delay=0
         )
 
         # Should resolve users from both rules and groups
-        assert len(resolved_usernames) > 0
-        assert all(v.endswith("-gh") for v in resolved_usernames.values())
-        assert len(resolved_user_ids) > 0
+        assert len(github_users) > 0
+        assert all(v.username.endswith("-gh") for v in github_users.values())
+        assert all(v.user_id is not None for v in github_users.values())
         assert len(unresolved) == 0
 
     def test_resolve_all_partial_failure(self, resolver, mock_people_client, sample_rules, sample_groups):
@@ -540,15 +539,14 @@ class TestUsernameResolver:
 
         mock_people_client.resolve_github.side_effect = mock_resolve
 
-        resolved_usernames, resolved_user_ids, unresolved = resolver.resolve_all(
+        github_users, unresolved = resolver.resolve_all(
             sample_rules, sample_groups, delay=0
         )
 
         # Only alice should be resolved
-        assert "alice" in resolved_usernames
-        assert resolved_usernames["alice"] == "alice-gh"
-        assert "alice" in resolved_user_ids
-        assert resolved_user_ids["alice"] == 12345
+        assert "alice" in github_users
+        assert github_users["alice"].username == "alice-gh"
+        assert github_users["alice"].user_id == 12345
         # Others should be unresolved
         assert len(unresolved) > 0
         unresolved_names = {u.phabricator_username for u in unresolved}
@@ -585,20 +583,19 @@ class TestUsernameResolver:
 
         mock_people_client.resolve_github.side_effect = mock_resolve
 
-        resolved_usernames, resolved_user_ids, unresolved = resolver.resolve_all(
+        github_users, unresolved = resolver.resolve_all(
             rules, {}, max_users=2, delay=0
         )
 
         # Should only resolve 2 users
-        assert len(resolved_usernames) == 2
+        assert len(github_users) == 2
         assert mock_people_client.resolve_github.call_count == 2
 
     def test_resolve_all_empty_inputs(self, resolver, mock_people_client):
         """Test resolving with empty rules and groups."""
-        resolved_usernames, resolved_user_ids, unresolved = resolver.resolve_all([], {}, delay=0)
+        github_users, unresolved = resolver.resolve_all([], {}, delay=0)
 
-        assert resolved_usernames == {}
-        assert resolved_user_ids == {}
+        assert github_users == {}
         assert unresolved == []
         mock_people_client.resolve_github.assert_not_called()
 

@@ -1,14 +1,31 @@
 """Tests for HeraldCrawler."""
 
+import json
+import tempfile
+from pathlib import Path
 from typing import Callable, List
 from unittest.mock import Mock, call
 
 import pytest
 
 from herald_scraper.client import HeraldClient
-from herald_scraper.crawler import HeraldCrawler, _sort_rule_ids, _deduplicate_rule_ids
+from herald_scraper.crawler import (
+    HeraldCrawler,
+    _sort_rule_ids,
+    _deduplicate_rule_ids,
+    load_existing_output,
+    atomic_write_json,
+)
 from herald_scraper.exceptions import RuleParseError
-from herald_scraper.models import Rule
+from herald_scraper.models import (
+    Rule,
+    Group,
+    GitHubUser,
+    HeraldRulesOutput,
+    Metadata,
+    ScrapeStatus,
+    UnresolvedUser,
+)
 
 
 class TestHelperFunctions:
@@ -405,3 +422,299 @@ class TestExtractAllRules:
         output = crawler.extract_all_rules(global_only=False, max_rules=1)
 
         assert len(output.rules) <= 1
+
+
+class TestLoadExistingOutput:
+    """Tests for load_existing_output function."""
+
+    def test_load_nonexistent_file(self, tmp_path: Path) -> None:
+        """Test loading from a file that doesn't exist."""
+        result = load_existing_output(tmp_path / "nonexistent.json")
+        assert result is None
+
+    def test_load_valid_output(self, tmp_path: Path) -> None:
+        """Test loading a valid output file."""
+        from datetime import datetime, timezone
+
+        output = HeraldRulesOutput(
+            rules=[
+                Rule(
+                    id="H420",
+                    name="Test Rule",
+                    author="test@example.com",
+                    status="active",
+                    type="differential-revision",
+                )
+            ],
+            groups={"test-group": Group(id="test-group", display_name="Test Group", members=["user1"])},
+            github_users={"user1": GitHubUser(username="user1-gh", user_id=12345)},
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=1,
+                total_groups=1,
+                phabricator_instance="phabricator.example.com",
+            ),
+        )
+
+        file_path = tmp_path / "output.json"
+        with open(file_path, "w") as f:
+            f.write(output.model_dump_json(indent=2))
+
+        result = load_existing_output(file_path)
+        assert result is not None
+        assert len(result.rules) == 1
+        assert result.rules[0].id == "H420"
+        assert "test-group" in result.groups
+        assert result.github_users.get("user1").username == "user1-gh"
+        assert result.github_users.get("user1").user_id == 12345
+
+    def test_load_invalid_json(self, tmp_path: Path) -> None:
+        """Test loading an invalid JSON file."""
+        file_path = tmp_path / "invalid.json"
+        with open(file_path, "w") as f:
+            f.write("{invalid json")
+
+        result = load_existing_output(file_path)
+        assert result is None
+
+    def test_load_invalid_schema(self, tmp_path: Path) -> None:
+        """Test loading a file with invalid schema."""
+        file_path = tmp_path / "wrong_schema.json"
+        with open(file_path, "w") as f:
+            json.dump({"not": "valid schema"}, f)
+
+        result = load_existing_output(file_path)
+        assert result is None
+
+
+class TestAtomicWriteJson:
+    """Tests for atomic_write_json function."""
+
+    def test_write_creates_file(self, tmp_path: Path) -> None:
+        """Test that atomic write creates the output file."""
+        from datetime import datetime, timezone
+
+        output = HeraldRulesOutput(
+            rules=[],
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=0,
+                total_groups=0,
+                phabricator_instance="test.example.com",
+            ),
+        )
+
+        file_path = tmp_path / "output.json"
+        atomic_write_json(file_path, output)
+
+        assert file_path.exists()
+        with open(file_path) as f:
+            data = json.load(f)
+        assert data["rules"] == []
+
+    def test_write_creates_parent_dirs(self, tmp_path: Path) -> None:
+        """Test that atomic write creates parent directories."""
+        from datetime import datetime, timezone
+
+        output = HeraldRulesOutput(
+            rules=[],
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=0,
+                total_groups=0,
+                phabricator_instance="test.example.com",
+            ),
+        )
+
+        file_path = tmp_path / "subdir" / "nested" / "output.json"
+        atomic_write_json(file_path, output)
+
+        assert file_path.exists()
+
+    def test_write_overwrites_existing(self, tmp_path: Path) -> None:
+        """Test that atomic write overwrites existing file."""
+        from datetime import datetime, timezone
+
+        file_path = tmp_path / "output.json"
+
+        # Write initial file
+        with open(file_path, "w") as f:
+            f.write('{"old": "data"}')
+
+        # Overwrite with atomic write
+        output = HeraldRulesOutput(
+            rules=[
+                Rule(
+                    id="H999",
+                    name="New Rule",
+                    author="test@example.com",
+                    status="active",
+                    type="differential-revision",
+                )
+            ],
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=1,
+                total_groups=0,
+                phabricator_instance="test.example.com",
+            ),
+        )
+        atomic_write_json(file_path, output)
+
+        with open(file_path) as f:
+            data = json.load(f)
+        assert len(data["rules"]) == 1
+        assert data["rules"][0]["id"] == "H999"
+
+
+class TestResumeFromExistingOutput:
+    """Tests for resuming extraction from existing output."""
+
+    def test_resume_skips_existing_rules(
+        self,
+        listing_html: str,
+        rule_h420_html: str,
+        rule_h422_html: str,
+    ) -> None:
+        """Test that existing rules are skipped during resume."""
+        from datetime import datetime, timezone
+
+        # Create existing output with H420 already scraped
+        existing_output = HeraldRulesOutput(
+            rules=[
+                Rule(
+                    id="H420",
+                    name="Existing Rule",
+                    author="existing@example.com",
+                    status="active",
+                    type="differential-revision",
+                )
+            ],
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=1,
+                total_groups=0,
+                phabricator_instance="phabricator.example.com",
+            ),
+        )
+
+        # Mock client that returns listing with H420 and H422
+        listing_with_two = """
+        <html><body>
+            <a href="/H420">H420</a>
+            <a href="/H422">H422</a>
+        </body></html>
+        """
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = listing_with_two
+        mock_client.fetch_rule.return_value = rule_h422_html
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=False,
+        )
+
+        # Should have both rules (1 existing + 1 new)
+        assert len(output.rules) == 2
+        # Only H422 should have been fetched (H420 was in existing)
+        mock_client.fetch_rule.assert_called_once_with("H422")
+
+    def test_resume_preserves_existing_github_users(
+        self,
+        listing_html: str,
+        rule_h420_html: str,
+    ) -> None:
+        """Test that existing GitHub users are preserved."""
+        from datetime import datetime, timezone
+
+        existing_output = HeraldRulesOutput(
+            rules=[],
+            github_users={"existinguser": GitHubUser(username="existing-gh", user_id=99999)},
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=0,
+                total_groups=0,
+                phabricator_instance="phabricator.example.com",
+            ),
+        )
+
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = "<html><body></body></html>"
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=False,
+        )
+
+        # Existing GitHub users should be preserved
+        assert output.github_users.get("existinguser").username == "existing-gh"
+        assert output.github_users.get("existinguser").user_id == 99999
+
+    def test_resume_skips_groups_with_members(
+        self,
+        rule_h420_html: str,
+    ) -> None:
+        """Test that groups with members are skipped during resume."""
+        from datetime import datetime, timezone
+
+        existing_output = HeraldRulesOutput(
+            rules=[
+                Rule(
+                    id="H420",
+                    name="Test Rule",
+                    author="test@example.com",
+                    status="active",
+                    type="differential-revision",
+                )
+            ],
+            groups={
+                "complete-group": Group(
+                    id="complete-group",
+                    display_name="Complete Group",
+                    members=["user1", "user2"],  # Non-empty = complete
+                ),
+            },
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=1,
+                total_groups=1,
+                phabricator_instance="phabricator.example.com",
+            ),
+        )
+
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = "<html><body></body></html>"
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=True,
+        )
+
+        # Existing group should be preserved
+        assert "complete-group" in output.groups
+        assert output.groups["complete-group"].members == ["user1", "user2"]
+
+    def test_scrape_status_is_set(self) -> None:
+        """Test that scrape_status is set in metadata."""
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = "<html><body></body></html>"
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            extract_groups=False,
+        )
+
+        assert output.metadata is not None
+        assert output.metadata.scrape_status is not None
+        assert isinstance(output.metadata.scrape_status, ScrapeStatus)

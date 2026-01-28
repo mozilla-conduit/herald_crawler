@@ -8,7 +8,7 @@ import sys
 import requests
 
 from herald_scraper.client import HeraldClient
-from herald_scraper.crawler import HeraldCrawler
+from herald_scraper.crawler import HeraldCrawler, atomic_write_json, load_existing_output
 from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.people_client import PeopleDirectoryClient
 
@@ -100,6 +100,22 @@ def main() -> int:
         help="Enable verbose logging",
     )
 
+    # Resume/force options
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from existing output file, skipping already-scraped items",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Ignore existing output file and start fresh",
+    )
+    parser.add_argument(
+        "--input", "-i",
+        help="Input file to resume from (defaults to output file if --resume is used)",
+    )
+
     # GitHub username resolution options
     parser.add_argument(
         "--no-resolve-github",
@@ -121,6 +137,11 @@ def main() -> int:
 
     logger = logging.getLogger(__name__)
 
+    # Validate conflicting options
+    if args.resume and args.force:
+        logger.error("Cannot use both --resume and --force")
+        return 4
+
     try:
         if args.url:
             client = HeraldClient(
@@ -138,6 +159,19 @@ def main() -> int:
         crawler = HeraldCrawler(client=client, progress_callback=progress_callback)
 
         max_pages = 1 if args.single_page else args.max_pages
+
+        # Load existing output for resume
+        existing_output = None
+        if args.resume or args.input:
+            input_file = args.input or args.output
+            if input_file:
+                existing_output = load_existing_output(input_file)
+                if existing_output:
+                    logger.info(f"Resuming from {input_file}")
+                elif args.resume:
+                    logger.info(f"No existing output at {input_file}, starting fresh")
+            elif args.resume:
+                logger.warning("--resume specified but no output file given, starting fresh")
 
         # Set up People Directory client for GitHub resolution (enabled by default)
         people_client = None
@@ -160,22 +194,27 @@ def main() -> int:
             max_groups=args.max_groups,
             people_client=people_client,
             max_users=args.max_users,
+            existing_output=existing_output,
         )
 
-        json_output = output.model_dump_json(indent=2, exclude_none=True)
-
         if args.output:
-            with open(args.output, "w") as f:
-                f.write(json_output)
+            atomic_write_json(args.output, output)
             logger.info(f"Output written to {args.output}")
         else:
+            json_output = output.model_dump_json(indent=2, exclude_none=True)
             print(json_output)
 
         logger.info(f"Extracted {len(output.rules)} rules, {len(output.groups)} groups")
-        if output.github_usernames:
+        if output.github_users:
             logger.info(
-                f"Resolved {len(output.github_usernames)} GitHub usernames, "
+                f"Resolved {len(output.github_users)} GitHub usernames, "
                 f"{len(output.unresolved_users)} unresolved"
+            )
+        if output.metadata and output.metadata.scrape_status:
+            status = output.metadata.scrape_status
+            logger.info(
+                f"Scrape status: rules_complete={status.rules_complete}, "
+                f"groups_complete={status.groups_complete}, github_complete={status.github_complete}"
             )
         return 0
 

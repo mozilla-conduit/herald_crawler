@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.exceptions import AuthenticationError
-from herald_scraper.models import Group, Rule, UnresolvedUser
+from herald_scraper.models import GitHubUser, Group, Rule, UnresolvedUser
 from herald_scraper.parsers import ProjectMembersPageParser, ProjectPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
 
@@ -190,8 +190,7 @@ class UsernameResolver:
             client: PeopleDirectoryClient instance for resolving usernames
         """
         self.client = client
-        self._username_cache: Dict[str, Optional[str]] = {}
-        self._user_id_cache: Dict[str, Optional[int]] = {}
+        self._cache: Dict[str, GitHubUser] = {}
         self._unresolved: Dict[str, str] = {}  # username -> reason
 
     def extract_usernames_from_rules(
@@ -261,9 +260,9 @@ class UsernameResolver:
         )
         return username_refs
 
-    def resolve_username(self, username: str) -> Tuple[Optional[str], Optional[int]]:
+    def resolve_username(self, username: str) -> Optional[GitHubUser]:
         """
-        Resolve a single Phabricator username to GitHub username and user ID.
+        Resolve a single Phabricator username to GitHub user info.
 
         Uses caching to avoid duplicate lookups.
 
@@ -271,39 +270,39 @@ class UsernameResolver:
             username: Phabricator username (may include @domain)
 
         Returns:
-            Tuple of (GitHub username, GitHub user ID), either may be None
+            GitHubUser with username and user_id, or None if unresolved
         """
         # Extract just the username part if it's an email
         lookup_name = username.split("@")[0] if "@" in username else username
 
         # Check cache first
-        if lookup_name in self._username_cache:
+        if lookup_name in self._cache:
             logger.debug(f"Cache hit for username: {lookup_name}")
-            return self._username_cache[lookup_name], self._user_id_cache.get(lookup_name)
+            return self._cache[lookup_name]
 
         # Check if already marked as unresolved
         if lookup_name in self._unresolved:
             logger.debug(f"Already unresolved: {lookup_name}")
-            return None, None
+            return None
 
         try:
             resolution = self.client.resolve_github(lookup_name)
 
             if resolution.username or resolution.user_id:
-                self._username_cache[lookup_name] = resolution.username
-                self._user_id_cache[lookup_name] = resolution.user_id
+                github_user = GitHubUser(username=resolution.username, user_id=resolution.user_id)
+                self._cache[lookup_name] = github_user
                 logger.debug(f"Resolved {lookup_name} -> {resolution.username} (ID: {resolution.user_id})")
-                return resolution.username, resolution.user_id
+                return github_user
             else:
                 self._unresolved[lookup_name] = "no_github_linked_or_not_found"
                 logger.debug(f"Could not resolve: {lookup_name}")
-                return None, None
+                return None
 
         except Exception as e:
             reason = f"error: {str(e)}"
             self._unresolved[lookup_name] = reason
             logger.warning(f"Error resolving {lookup_name}: {e}")
-            return None, None
+            return None
 
     def resolve_all(
         self,
@@ -311,7 +310,7 @@ class UsernameResolver:
         groups: Dict[str, Group],
         max_users: Optional[int] = None,
         delay: float = 0.5,
-    ) -> Tuple[Dict[str, str], Dict[str, int], List[UnresolvedUser]]:
+    ) -> Tuple[Dict[str, GitHubUser], List[UnresolvedUser]]:
         """
         Resolve all usernames found in rules and groups.
 
@@ -322,7 +321,7 @@ class UsernameResolver:
             delay: Delay between API requests in seconds
 
         Returns:
-            Tuple of (resolved_usernames dict, resolved_user_ids dict, unresolved_users list)
+            Tuple of (resolved_users dict, unresolved_users list)
         """
         # Extract all usernames
         group_slugs = set(groups.keys())
@@ -341,8 +340,7 @@ class UsernameResolver:
 
         logger.info(f"Resolving GitHub usernames for {len(all_refs)} users")
 
-        resolved_usernames: Dict[str, str] = {}
-        resolved_user_ids: Dict[str, int] = {}
+        resolved_users: Dict[str, GitHubUser] = {}
         count = 0
 
         for username in sorted(all_refs.keys()):
@@ -350,13 +348,11 @@ class UsernameResolver:
                 logger.info(f"Reached max_users limit ({max_users}), stopping")
                 break
 
-            github_username, github_user_id = self.resolve_username(username)
+            github_user = self.resolve_username(username)
             # Store with the lookup name (without @domain)
             lookup_name = username.split("@")[0] if "@" in username else username
-            if github_username:
-                resolved_usernames[lookup_name] = github_username
-            if github_user_id:
-                resolved_user_ids[lookup_name] = github_user_id
+            if github_user:
+                resolved_users[lookup_name] = github_user
 
             count += 1
 
@@ -383,13 +379,12 @@ class UsernameResolver:
             )
 
         logger.info(
-            f"Resolved {len(resolved_usernames)} usernames, {len(resolved_user_ids)} user IDs, {len(unresolved_list)} unresolved"
+            f"Resolved {len(resolved_users)} users, {len(unresolved_list)} unresolved"
         )
-        return resolved_usernames, resolved_user_ids, unresolved_list
+        return resolved_users, unresolved_list
 
     def clear_cache(self) -> None:
         """Clear the internal caches."""
-        self._username_cache.clear()
-        self._user_id_cache.clear()
+        self._cache.clear()
         self._unresolved.clear()
         logger.debug("Username resolver cache cleared")

@@ -1,15 +1,19 @@
 """Herald crawler for extracting rules from Phabricator."""
 
+import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
-from typing import Dict, Generator, List, Optional, Callable, Tuple
+from pathlib import Path
+from typing import Dict, Generator, List, Optional, Callable, Set, Tuple, Union
 from urllib.parse import urlparse
 
 import requests
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.exceptions import RuleParseError
-from herald_scraper.models import Group, Rule, HeraldRulesOutput, Metadata, UnresolvedUser
+from herald_scraper.models import GitHubUser, Group, Rule, HeraldRulesOutput, Metadata, ScrapeStatus, UnresolvedUser
 from herald_scraper.parsers import ListingPageParser, RuleDetailPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
 from herald_scraper.resolvers import GroupCollector, UsernameResolver
@@ -57,6 +61,74 @@ def _deduplicate_rule_ids(rule_ids: List[str]) -> List[str]:
     return unique_ids
 
 
+def load_existing_output(file_path: Union[str, Path]) -> Optional[HeraldRulesOutput]:
+    """
+    Load existing Herald rules output from a JSON file.
+
+    Args:
+        file_path: Path to the JSON file
+
+    Returns:
+        HeraldRulesOutput if file exists and is valid, None otherwise
+    """
+    path = Path(file_path)
+    if not path.exists():
+        logger.debug(f"No existing output file at {path}")
+        return None
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        output = HeraldRulesOutput.model_validate(data)
+        logger.info(
+            f"Loaded existing output: {len(output.rules)} rules, "
+            f"{len(output.groups)} groups, {len(output.github_users)} GitHub users"
+        )
+        return output
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse existing output file {path}: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to load existing output file {path}: {e}")
+        return None
+
+
+def atomic_write_json(file_path: Union[str, Path], output: HeraldRulesOutput) -> None:
+    """
+    Write output to JSON file atomically.
+
+    Writes to a temporary file first, then renames to avoid corruption
+    if the process is interrupted.
+
+    Args:
+        file_path: Path to write the output file
+        output: HeraldRulesOutput to serialize
+    """
+    path = Path(file_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write to temp file in same directory (for atomic rename)
+    fd, temp_path = tempfile.mkstemp(
+        suffix=".tmp",
+        prefix=path.stem + "_",
+        dir=path.parent,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json_str = output.model_dump_json(indent=2, exclude_none=True)
+            f.write(json_str)
+            f.write("\n")
+
+        # Atomic rename
+        os.replace(temp_path, path)
+        logger.debug(f"Wrote output to {path}")
+    except Exception:
+        # Clean up temp file on error
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
+
+
 class HeraldCrawler:
     """Crawler that fetches and parses Herald rules from Phabricator."""
 
@@ -87,6 +159,7 @@ class HeraldCrawler:
         max_groups: Optional[int] = None,
         people_client: Optional[PeopleDirectoryClient] = None,
         max_users: Optional[int] = None,
+        existing_output: Optional[HeraldRulesOutput] = None,
     ) -> HeraldRulesOutput:
         """
         Extract all Herald rules and return complete output.
@@ -99,58 +172,125 @@ class HeraldCrawler:
             max_groups: Optional limit on number of groups to collect (stops collecting early)
             people_client: Optional PeopleDirectoryClient for GitHub username resolution
             max_users: Optional limit on number of users to resolve (stops resolving early)
+            existing_output: Optional existing output to resume from (skip already-scraped items)
 
         Returns:
             HeraldRulesOutput with all extracted rules, groups, and metadata
         """
-        if global_only:
-            rule_ids = self.extract_global_rule_ids(max_pages=max_pages, max_rules=max_rules)
-        else:
-            rule_ids = self.extract_rule_ids(max_pages=max_pages, max_rules=max_rules)
+        # Determine what's already been scraped
+        existing_rule_ids: Set[str] = set()
+        existing_groups: Dict[str, Group] = {}
+        existing_github_users: Dict[str, GitHubUser] = {}
+        existing_unresolved: Set[str] = set()
+        existing_rules: List[Rule] = []
 
-        rules = self.extract_rules(rule_ids)
+        if existing_output:
+            existing_rule_ids = {rule.id for rule in existing_output.rules}
+            existing_rules = list(existing_output.rules)
+            # Only consider groups with non-empty members as "complete"
+            existing_groups = {
+                slug: group for slug, group in existing_output.groups.items()
+                if group.members  # non-empty members list
+            }
+            existing_github_users = dict(existing_output.github_users)
+            existing_unresolved = {u.phabricator_username for u in existing_output.unresolved_users}
+            logger.info(
+                f"Resuming from existing output: {len(existing_rule_ids)} rules, "
+                f"{len(existing_groups)} groups (with members), "
+                f"{len(existing_github_users)} GitHub users"
+            )
+
+        # Get all rule IDs
+        if global_only:
+            all_rule_ids = self.extract_global_rule_ids(max_pages=max_pages, max_rules=max_rules)
+        else:
+            all_rule_ids = self.extract_rule_ids(max_pages=max_pages, max_rules=max_rules)
+
+        # Filter out already-scraped rules
+        new_rule_ids = [rid for rid in all_rule_ids if rid not in existing_rule_ids]
+        if existing_rule_ids:
+            logger.info(f"Skipping {len(existing_rule_ids)} already-scraped rules, fetching {len(new_rule_ids)} new rules")
+
+        # Extract new rules
+        new_rules = self.extract_rules(new_rule_ids)
+
+        # Merge rules (existing + new)
+        rules = existing_rules + new_rules
+        rules_complete = len(new_rule_ids) == 0 or len(new_rules) == len(new_rule_ids)
 
         # Collect group membership if requested
-        groups: Dict[str, Group] = {}
+        groups: Dict[str, Group] = dict(existing_groups)
+        groups_complete = True
         if extract_groups and rules:
             logger.info("Collecting group membership for reviewer groups")
             group_collector = GroupCollector(self.client)
-            groups = group_collector.collect_all_groups(rules, max_groups=max_groups)
+
+            # Pre-populate cache with existing groups
+            for slug, group in existing_groups.items():
+                group_collector._cache[slug] = group
+
+            all_groups = group_collector.collect_all_groups(rules, max_groups=max_groups)
+            groups.update(all_groups)
+
+            # Check if any groups have empty members (incomplete)
+            groups_complete = all(group.members for group in groups.values())
 
         # Resolve GitHub usernames and user IDs if people_client provided
-        github_usernames: Dict[str, str] = {}
-        github_user_ids: Dict[str, int] = {}
+        github_users: Dict[str, GitHubUser] = dict(existing_github_users)
         unresolved_users: List[UnresolvedUser] = []
+        github_complete = True
+
         if people_client and rules:
             logger.info("Resolving GitHub usernames for users")
             username_resolver = UsernameResolver(people_client)
-            github_usernames, github_user_ids, unresolved_users = username_resolver.resolve_all(
+
+            # Pre-populate cache with existing data
+            for username, gh_user in existing_github_users.items():
+                username_resolver._cache[username] = gh_user
+            for username in existing_unresolved:
+                username_resolver._unresolved[username] = "previously_unresolved"
+
+            new_users, new_unresolved = username_resolver.resolve_all(
                 rules, groups, max_users=max_users, delay=people_client.delay
             )
+
+            github_users.update(new_users)
+
+            # Rebuild unresolved list from resolver's state
+            unresolved_users = new_unresolved
+
+            # Check if we hit max_users limit
+            github_complete = max_users is None or len(new_users) < max_users
 
             # Populate author_github on rules
             for rule in rules:
                 author_lookup = rule.author.split("@")[0] if "@" in rule.author else rule.author
-                if author_lookup in github_usernames:
-                    rule.author_github = github_usernames[author_lookup]
+                if author_lookup in github_users:
+                    rule.author_github = github_users[author_lookup].username
 
         parsed_url = urlparse(self.client.base_url)
         instance = parsed_url.netloc or self.client.base_url
+
+        scrape_status = ScrapeStatus(
+            rules_complete=rules_complete,
+            groups_complete=groups_complete,
+            github_complete=github_complete,
+        )
 
         metadata = Metadata(
             extracted_at=datetime.now(timezone.utc),
             total_rules=len(rules),
             total_groups=len(groups),
-            total_users_resolved=len(github_usernames),
+            total_users_resolved=len(github_users),
             total_users_unresolved=len(unresolved_users),
             phabricator_instance=instance,
+            scrape_status=scrape_status,
         )
 
         return HeraldRulesOutput(
             rules=rules,
             groups=groups,
-            github_usernames=github_usernames,
-            github_user_ids=github_user_ids,
+            github_users=github_users,
             unresolved_users=unresolved_users,
             metadata=metadata,
         )

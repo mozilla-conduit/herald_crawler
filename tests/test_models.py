@@ -11,6 +11,7 @@ from herald_scraper.models import (
     Action,
     Rule,
     Group,
+    GitHubUser,
     UnresolvedUser,
     Metadata,
     HeraldRulesOutput,
@@ -388,7 +389,7 @@ class TestHeraldRulesOutput:
         output = HeraldRulesOutput()
         assert output.rules == []
         assert output.groups == {}
-        assert output.github_usernames == {}
+        assert output.github_users == {}
         assert output.unresolved_users == []
         assert output.metadata is None
 
@@ -437,8 +438,8 @@ class TestHeraldRulesOutput:
         assert len(output.groups) == 1
         assert output.metadata.total_rules == 1
 
-    def test_create_output_with_github_usernames(self):
-        """Test creating an output with GitHub username mappings."""
+    def test_create_output_with_github_users(self):
+        """Test creating an output with GitHub user mappings."""
         output = HeraldRulesOutput(
             rules=[
                 Rule(
@@ -457,9 +458,9 @@ class TestHeraldRulesOutput:
                     ]
                 )
             ],
-            github_usernames={
-                "alice": "alice-gh",
-                "bob": "bob-gh"
+            github_users={
+                "alice": GitHubUser(username="alice-gh", user_id=12345),
+                "bob": GitHubUser(username="bob-gh", user_id=67890)
             },
             unresolved_users=[
                 UnresolvedUser(
@@ -469,7 +470,9 @@ class TestHeraldRulesOutput:
                 )
             ]
         )
-        assert output.github_usernames == {"alice": "alice-gh", "bob": "bob-gh"}
+        assert output.github_users["alice"].username == "alice-gh"
+        assert output.github_users["alice"].user_id == 12345
+        assert output.github_users["bob"].username == "bob-gh"
         assert len(output.unresolved_users) == 1
         assert output.unresolved_users[0].phabricator_username == "charlie"
 

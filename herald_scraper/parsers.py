@@ -351,6 +351,33 @@ class RuleDetailPageParser:
                 value=True
             )
 
+        # Affected files contains (exact string match)
+        if text.startswith("Affected files contains "):
+            value = text.replace("Affected files contains ", "", 1)
+            return Condition(
+                type="differential-affected-files",
+                operator="contains",
+                value=value
+            )
+
+        # Changed file content does not contain
+        if text.startswith("Changed file content does not contain "):
+            value = text.replace("Changed file content does not contain ", "", 1)
+            return Condition(
+                type="differential-file-content",
+                operator="does-not-contain",
+                value=value
+            )
+
+        # Changed file content contains
+        if text.startswith("Changed file content contains "):
+            value = text.replace("Changed file content contains ", "", 1)
+            return Condition(
+                type="differential-file-content",
+                operator="contains",
+                value=value
+            )
+
         # Generic fallback - log unknown condition types
         return Condition(
             type="unknown",
@@ -373,9 +400,18 @@ class RuleDetailPageParser:
         return names
 
     def _extract_regexp_pattern(self, text: str) -> Optional[str]:
-        """Extract regexp pattern from condition text (between @ delimiters)."""
-        # Pattern is enclosed in @ symbols
+        """Extract regexp pattern from condition text.
+
+        Patterns can be delimited by:
+        - @ symbols: @pattern@
+        - / symbols: /pattern/
+        """
+        # Try @ delimiters first
         match = re.search(r"@(.+)@", text)
+        if match:
+            return match.group(1)
+        # Try / delimiters (common in Phabricator)
+        match = re.search(r"regexp\s+/(.+)/\s*$", text)
         if match:
             return match.group(1)
         return None

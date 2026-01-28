@@ -65,6 +65,23 @@ class UnresolvedUser(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class GitHubUser(BaseModel):
+    """Resolved GitHub user information."""
+    username: Optional[str] = Field(default=None, description="GitHub username")
+    user_id: Optional[int] = Field(default=None, description="GitHub numeric user ID")
+
+    model_config = {"extra": "forbid"}
+
+
+class ScrapeStatus(BaseModel):
+    """Tracks completion status of each scraping phase."""
+    rules_complete: bool = Field(default=False, description="Whether all rules have been fetched")
+    groups_complete: bool = Field(default=False, description="Whether all groups have been fetched")
+    github_complete: bool = Field(default=False, description="Whether GitHub resolution is complete")
+
+    model_config = {"extra": "forbid"}
+
+
 class Metadata(BaseModel):
     """Metadata about the extraction."""
     extracted_at: datetime
@@ -73,6 +90,7 @@ class Metadata(BaseModel):
     total_users_resolved: int = Field(default=0, description="Number of users with GitHub usernames resolved")
     total_users_unresolved: int = Field(default=0, description="Number of users without GitHub usernames")
     phabricator_instance: str
+    scrape_status: Optional[ScrapeStatus] = Field(default=None, description="Completion status for resumable scraping")
 
     model_config = {"extra": "forbid"}
 
@@ -81,13 +99,9 @@ class HeraldRulesOutput(BaseModel):
     """Complete output structure for Herald rules extraction."""
     rules: List[Rule] = Field(default_factory=list)
     groups: Dict[str, Group] = Field(default_factory=dict)
-    github_usernames: Dict[str, str] = Field(
+    github_users: Dict[str, GitHubUser] = Field(
         default_factory=dict,
-        description="Mapping of Phabricator username to GitHub username",
-    )
-    github_user_ids: Dict[str, int] = Field(
-        default_factory=dict,
-        description="Mapping of Phabricator username to GitHub numeric user ID",
+        description="Mapping of Phabricator username to GitHub user info",
     )
     unresolved_users: List[UnresolvedUser] = Field(
         default_factory=list,
