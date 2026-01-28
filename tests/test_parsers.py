@@ -203,7 +203,7 @@ class TestRuleDetailPageParser:
         ("rule_H420.html", {
             "id": "H420",
             "name": "Blocked by omc-reviewers #1",
-            "author": "dkl_admin",
+            "author": "USER-605ce504",
             "is_global": True,
             "file_regexp": r"/?browser/locales/en-US/browser/(newtab/onboarding\.ftl|spotlight\.ftl|newtab/asrouter\.ftl|featureCallout\.ftl)",
             "reviewers": ["omc-reviewers"],
@@ -212,7 +212,7 @@ class TestRuleDetailPageParser:
         ("rule_H422.html", {
             "id": "H422",
             "name": "Blocked by omc-reviewers #2",
-            "author": "dkl_admin",
+            "author": "USER-605ce504",
             "is_global": True,
             "file_regexp": r"/?(browser|toolkit)/components/(asrouter|aboutwelcome|messagepreview|uitour|messaging-system)/",
             "reviewers": ["omc-reviewers"],
@@ -221,7 +221,7 @@ class TestRuleDetailPageParser:
         ("rule_H425.html", {
             "id": "H425",
             "name": "Blocked by android-reviewers",
-            "author": "dkl_admin",
+            "author": "USER-605ce504",
             "is_global": True,
             "file_regexp": r"/?mobile/android/(fenix|focus-android|android-components)",
             "reviewers": ["android-reviewers"],
@@ -230,7 +230,7 @@ class TestRuleDetailPageParser:
         ("rule_H432.html", {
             "id": "H432",
             "name": "Blocked by sidebar-reviewers-rotation",
-            "author": "dkl_admin",
+            "author": "USER-605ce504",
             "is_global": True,
             "file_regexp": r"/?browser/(components/sidebar/|base/content/browser-sidebar\.js|themes/shared/sidebar\.css)",
             "reviewers": ["sidebar-reviewers-rotation"],
@@ -239,7 +239,7 @@ class TestRuleDetailPageParser:
         ("rule_H483.html", {
             "id": "H483",
             "name": "Blocked by geckoview-api-reviewers",
-            "author": "dkl_admin",
+            "author": "USER-605ce504",
             "is_global": True,
             "file_regexp": r"/?mobile/android/geckoview/api.txt",
             "reviewers": ["geckoview-api-reviewers"],
@@ -248,7 +248,7 @@ class TestRuleDetailPageParser:
         ("rule_H507.html", {
             "id": "H507",
             "name": "Blocked by geckodriver-reviewers",
-            "author": "dkl_admin",
+            "author": "USER-605ce504",
             "is_global": True,
             "file_regexp": r"^/testing/(geckodriver|mozbase/rust|webdriver)",
             "reviewers": ["geckodriver-reviewers"],
@@ -276,6 +276,7 @@ class TestRuleDetailPageParser:
         # Check basic metadata
         assert rule_id == expected["id"], f"Rule ID mismatch"
         assert rule_name == expected["name"], f"Rule name mismatch"
+        # Check author matches expected anonymized value
         assert author == expected["author"], f"Author mismatch: got '{author}', expected '{expected['author']}'"
         assert is_global == expected["is_global"], f"is_global mismatch: got {is_global}, expected {expected['is_global']}"
 
@@ -362,8 +363,7 @@ class TestProjectPageParser:
             "project_id": "171",
             "display_name": "omc-reviewers",
             # Full timeline available - exact member verification
-            # Note: aminomancer is the actor (adds others), not a member
-            "expected_members": ["lsmith", "mviar", "sachung"],
+            "member_count": 3,
         }),
         ("android-reviewers.html", {
             "slug": "android-reviewers",
@@ -384,7 +384,7 @@ class TestProjectPageParser:
             "project_id": "226",
             "display_name": "geckoview-api-reviewers",
             # Only one addition visible in timeline
-            "expected_members": ["tcampbell"],
+            "member_count": 1,
         }),
         ("geckodriver-reviewers.html", {
             "slug": "geckodriver-reviewers",
@@ -419,10 +419,10 @@ class TestProjectPageParser:
         # Check members
         assert isinstance(info["members"], list), "Members should be a list"
 
-        if "expected_members" in expected:
-            # Check exact member list (sorted for comparison)
-            assert sorted(info["members"]) == sorted(expected["expected_members"]), \
-                f"Members mismatch: got {sorted(info['members'])}, expected {sorted(expected['expected_members'])}"
+        if "member_count" in expected:
+            # Check member count (names are anonymized with USER- prefix)
+            assert len(info["members"]) == expected["member_count"], \
+                f"Member count mismatch: got {len(info['members'])}, expected {expected['member_count']}"
         elif "min_members" in expected:
             # Check minimum member count
             assert len(info["members"]) >= expected["min_members"], \
@@ -481,25 +481,13 @@ class TestProjectPageParser:
 
         members = parser._extract_members()
 
-        # Based on timeline analysis of omc-reviewers fixture:
-        # - Created by zeid_admin
-        # - beth removed herself (but was never added in visible timeline)
-        # - aminomancer added yozhang, then removed yozhang
-        # - aminomancer added lsmith
-        # - hanna_a added mviar
-        # - mviar added sachung
-        # - aminomancer removed pdahiya and Mardak (but they were never added in visible timeline)
-        # Note: aminomancer is the actor (adds others), not a member
-        # Current members based on timeline: lsmith, mviar, sachung
+        # Verify member extraction works (names are anonymized with USER- prefix)
         assert isinstance(members, list)
-        assert "lsmith" in members
-        assert "mviar" in members
-        assert "sachung" in members
-        # These should NOT be in members (removed or never added)
-        assert "aminomancer" not in members  # Actor, not member
-        assert "yozhang" not in members  # Added then removed
-        assert "pdahiya" not in members  # Removed
-        assert "Mardak" not in members  # Removed
+        # Based on timeline, should have 3 current members
+        assert len(members) == 3, f"Expected 3 members from timeline, got {len(members)}"
+        # All members should be anonymized with USER- prefix
+        for member in members:
+            assert member.startswith("USER-"), f"Member should have USER- prefix, got '{member}'"
 
     def test_extract_slug_minimal_html(self):
         """Test slug extraction with minimal HTML containing just title."""
@@ -559,64 +547,31 @@ class TestProjectMembersPageParser:
             pytest.skip("Project fixtures not found")
         return {f.stem.replace("-members", ""): f for f in groups_dir.glob("*-members.html")}
 
-    # Expected members for each group fixture (sorted alphabetically)
-    EXPECTED_MEMBERS = {
-        "omc-reviewers": [
-            "aminomancer", "dmose", "emcminn", "hanna_a", "jprickett",
-            "lsmith", "mimi", "mviar", "sachung"
-        ],
-        "geckodriver-reviewers": ["Sasha", "jgraham", "whimboo"],
-        "sidebar-reviewers-rotation": [
-            "jsudiaman", "kcochrane", "nsharpley", "sclements", "sfoster"
-        ],
-        "geckoview-api-reviewers": [
-            "bclark", "botond", "calu", "hiro", "m_kato", "nalexander",
-            "nika", "ohall", "owlish", "pollymce", "tcampbell", "tthibaud"
-        ],
-        "android-reviewers": [
-            "007", "RJ", "Roger", "adhingra", "anpopa", "apindiprolu",
-            "avirvara", "azinovyev", "boek", "calu", "devota", "fmasalha",
-            "giorga", "gl", "gmalekpour", "harrisono", "jdelorenzo",
-            "joberhauser", "jonalmeida", "kaya", "lmccracken", "marcin",
-            "matt-tighe", "mavduevskiy", "mcarare", "moyin", "nalexander",
-            "npoon", "ohall", "owlish", "petru", "pollymce",
-            "rebecatudor273", "rsainani", "sfamisa", "skhan", "tcampbell",
-            "tchoh", "tjorjani", "tthibaud", "twhite", "vdreghici"
-        ],
-        "desktop-theme-reviewers": [
-            "Itiel", "Julian", "dao", "emilio", "hjones", "jules",
-            "kcochrane", "mstriemer", "sfoster", "tgiles", "zrhoffman"
-        ],
-        "profiler-reviewers": [
-            "canaltinova", "dcarver", "fatadel", "florian", "mstange"
-        ],
-        "win-reviewers": [
-            "cdupuis", "cmartin", "gstoll", "handyman", "mpohle",
-            "nrishel", "rkraesig", "yjuglaret"
-        ],
-        "dom-storage-reviewers": [
-            "asuth", "edenchuang", "hsingh", "hsinyi", "janv",
-            "jari", "jesup", "jstutte"
-        ],
-        "reusable-components-reviewers-rotation": [
-            "akulyk", "hjones", "jules", "mkennedy", "mstriemer", "tgiles"
-        ],
-    }
 
-    @pytest.mark.parametrize("group_slug,expected_count", [
-        ("omc-reviewers", 9),
-        ("geckodriver-reviewers", 3),
-        ("sidebar-reviewers-rotation", 5),
-        ("geckoview-api-reviewers", 12),
-        ("android-reviewers", 42),
-        ("desktop-theme-reviewers", 11),
-        ("profiler-reviewers", 5),
-        ("win-reviewers", 8),
-        ("dom-storage-reviewers", 8),
-        ("reusable-components-reviewers-rotation", 6),
+    @pytest.mark.parametrize("group_slug,expected", [
+        ("omc-reviewers", {
+            "count": 9,
+            "members": [
+                "USER-06226534", "USER-59cbbe90", "USER-69a50f17", "USER-6af548db",
+                "USER-9cc7d5c1", "USER-9e6f8676", "USER-a90328fb", "USER-b75e60d7",
+                "USER-c6b438b0",
+            ],
+        }),
+        ("geckodriver-reviewers", {
+            "count": 3,
+            "members": ["USER-daec092a", "USER-ecc79034", "USER-fabcad3f"],
+        }),
+        ("sidebar-reviewers-rotation", {"count": 5}),
+        ("geckoview-api-reviewers", {"count": 12}),
+        ("android-reviewers", {"count": 42}),
+        ("desktop-theme-reviewers", {"count": 11}),
+        ("profiler-reviewers", {"count": 5}),
+        ("win-reviewers", {"count": 8}),
+        ("dom-storage-reviewers", {"count": 8}),
+        ("reusable-components-reviewers-rotation", {"count": 6}),
     ])
-    def test_extract_members_count(self, members_fixtures, group_slug, expected_count):
-        """Test that the correct number of members is extracted."""
+    def test_extract_members(self, members_fixtures, group_slug, expected):
+        """Test that the correct members are extracted."""
         if group_slug not in members_fixtures:
             pytest.skip(f"No fixture for {group_slug}")
 
@@ -624,10 +579,17 @@ class TestProjectMembersPageParser:
         parser = ProjectMembersPageParser(html)
         members = parser.extract_members()
 
-        assert len(members) == expected_count, (
-            f"Expected {expected_count} members for {group_slug}, "
+        assert len(members) == expected["count"], (
+            f"Expected {expected['count']} members for {group_slug}, "
             f"got {len(members)}"
         )
+
+        # If exact members list is provided, verify it
+        if "members" in expected:
+            assert members == sorted(expected["members"]), (
+                f"Members mismatch for {group_slug}: "
+                f"got {members}, expected {sorted(expected['members'])}"
+            )
 
     def test_extract_members_returns_sorted(self, members_fixtures):
         """Test that members are returned in sorted order."""
