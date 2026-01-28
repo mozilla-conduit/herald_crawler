@@ -99,6 +99,22 @@ class GroupCollector:
                     members_parser = ProjectMembersPageParser(members_html)
                     members = members_parser.extract_members()
                     logger.info(f"Got {len(members)} members from members page for {slug}")
+
+                    # If members page returned 0 members, it might be an auth issue
+                    # Fall back to timeline parsing which might have some members
+                    if len(members) == 0 and len(project_info["members"]) > 0:
+                        logger.warning(
+                            f"Members page returned 0 members for {slug}, "
+                            f"but timeline has {len(project_info['members'])} members. "
+                            f"This may indicate an authentication issue. "
+                            f"Falling back to timeline members."
+                        )
+                        members = project_info["members"]
+                    elif len(members) == 0:
+                        logger.warning(
+                            f"No members found for {slug} from members page or timeline. "
+                            f"This may indicate an authentication issue or empty group."
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to fetch members page for {slug}: {e}")
                     # Fall back to timeline parsing

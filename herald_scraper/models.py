@@ -37,6 +37,7 @@ class Rule(BaseModel):
     id: str
     name: str
     author: str
+    author_github: Optional[str] = Field(default=None, description="Author's GitHub username if resolved")
     status: str
     type: str
     conditions: List[Condition] = Field(default_factory=list)
@@ -68,6 +69,8 @@ class Metadata(BaseModel):
     extracted_at: datetime
     total_rules: int
     total_groups: int
+    total_users_resolved: int = Field(default=0, description="Number of users with GitHub usernames resolved")
+    total_users_unresolved: int = Field(default=0, description="Number of users without GitHub usernames")
     phabricator_instance: str
 
     model_config = {"extra": "forbid"}

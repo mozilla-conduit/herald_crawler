@@ -162,7 +162,7 @@ def main() -> int:
             max_users=args.max_users,
         )
 
-        json_output = output.model_dump_json(indent=2)
+        json_output = output.model_dump_json(indent=2, exclude_none=True)
 
         if args.output:
             with open(args.output, "w") as f:

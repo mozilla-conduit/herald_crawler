@@ -127,6 +127,12 @@ class HeraldCrawler:
                 rules, groups, max_users=max_users, delay=people_client.delay
             )
 
+            # Populate author_github on rules
+            for rule in rules:
+                author_lookup = rule.author.split("@")[0] if "@" in rule.author else rule.author
+                if author_lookup in github_usernames:
+                    rule.author_github = github_usernames[author_lookup]
+
         parsed_url = urlparse(self.client.base_url)
         instance = parsed_url.netloc or self.client.base_url
 
@@ -134,6 +140,8 @@ class HeraldCrawler:
             extracted_at=datetime.now(timezone.utc),
             total_rules=len(rules),
             total_groups=len(groups),
+            total_users_resolved=len(github_usernames),
+            total_users_unresolved=len(unresolved_users),
             phabricator_instance=instance,
         )
 
