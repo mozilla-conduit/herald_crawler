@@ -2,9 +2,15 @@
 
 import logging
 import time
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import requests
+
+
+class GitHubResolution(NamedTuple):
+    """Result of resolving a Phabricator username to GitHub."""
+    username: Optional[str]
+    user_id: Optional[int]
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +85,8 @@ class PeopleDirectoryClient:
         response.raise_for_status()
         return response.json()
 
-    def resolve_github_username(self, username: str) -> Optional[str]:
-        """Resolve Phabricator username to GitHub username.
+    def resolve_github(self, username: str) -> GitHubResolution:
+        """Resolve Phabricator username to GitHub username and user ID.
 
         This is the main method that performs the full two-step resolution.
 
@@ -88,7 +94,7 @@ class PeopleDirectoryClient:
             username: Phabricator username
 
         Returns:
-            GitHub username if found, None otherwise
+            GitHubResolution with username and user_id (either may be None)
         """
         # Step 1: Get GitHub ID
         graphql_response = self.get_github_id(username)
@@ -96,7 +102,14 @@ class PeopleDirectoryClient:
 
         if not github_id:
             logger.debug(f"No GitHub ID found for: {username}")
-            return None
+            return GitHubResolution(username=None, user_id=None)
+
+        # Convert ID string to int
+        try:
+            github_user_id = int(github_id)
+        except ValueError:
+            logger.warning(f"Invalid GitHub ID format: {github_id}")
+            return GitHubResolution(username=None, user_id=None)
 
         # Rate limit between API calls
         time.sleep(self.delay)
@@ -106,11 +119,24 @@ class PeopleDirectoryClient:
         github_username = extract_github_username(rest_response)
 
         if github_username:
-            logger.info(f"Resolved {username} -> {github_username}")
+            logger.info(f"Resolved {username} -> {github_username} (ID: {github_user_id})")
         else:
             logger.warning(f"Could not resolve GitHub username from ID {github_id}")
 
-        return github_username
+        return GitHubResolution(username=github_username, user_id=github_user_id)
+
+    def resolve_github_username(self, username: str) -> Optional[str]:
+        """Resolve Phabricator username to GitHub username.
+
+        Convenience method that only returns the username.
+
+        Args:
+            username: Phabricator username
+
+        Returns:
+            GitHub username if found, None otherwise
+        """
+        return self.resolve_github(username).username
 
 
 def extract_github_id(response: dict) -> Optional[str]:

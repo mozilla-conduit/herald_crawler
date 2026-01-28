@@ -105,14 +105,17 @@ class TestReviewer:
             "target": "user@example.com",
             "blocking": True,
             "github_username": None,
+            "github_user_id": None,
         }
 
     def test_reviewer_with_github_username(self):
-        """Test creating a reviewer with GitHub username."""
-        reviewer = Reviewer(target="user@example.com", blocking=True, github_username="octocat")
+        """Test creating a reviewer with GitHub username and user ID."""
+        reviewer = Reviewer(target="user@example.com", blocking=True, github_username="octocat", github_user_id=12345)
         assert reviewer.github_username == "octocat"
+        assert reviewer.github_user_id == 12345
         data = reviewer.model_dump()
         assert data["github_username"] == "octocat"
+        assert data["github_user_id"] == 12345
 
 
 class TestAction:

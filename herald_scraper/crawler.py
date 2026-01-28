@@ -117,13 +117,14 @@ class HeraldCrawler:
             group_collector = GroupCollector(self.client)
             groups = group_collector.collect_all_groups(rules, max_groups=max_groups)
 
-        # Resolve GitHub usernames if people_client provided
+        # Resolve GitHub usernames and user IDs if people_client provided
         github_usernames: Dict[str, str] = {}
+        github_user_ids: Dict[str, int] = {}
         unresolved_users: List[UnresolvedUser] = []
         if people_client and rules:
             logger.info("Resolving GitHub usernames for users")
             username_resolver = UsernameResolver(people_client)
-            github_usernames, unresolved_users = username_resolver.resolve_all(
+            github_usernames, github_user_ids, unresolved_users = username_resolver.resolve_all(
                 rules, groups, max_users=max_users, delay=people_client.delay
             )
 
@@ -149,6 +150,7 @@ class HeraldCrawler:
             rules=rules,
             groups=groups,
             github_usernames=github_usernames,
+            github_user_ids=github_user_ids,
             unresolved_users=unresolved_users,
             metadata=metadata,
         )

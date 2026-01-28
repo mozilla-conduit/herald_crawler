@@ -19,6 +19,7 @@ class Reviewer(BaseModel):
     target: str = Field(..., description="Username, email, or group name")
     blocking: bool = Field(default=False, description="Whether this is a blocking reviewer")
     github_username: Optional[str] = Field(default=None, description="Resolved GitHub username")
+    github_user_id: Optional[int] = Field(default=None, description="Resolved GitHub numeric user ID")
 
     model_config = {"extra": "forbid"}
 
@@ -83,6 +84,10 @@ class HeraldRulesOutput(BaseModel):
     github_usernames: Dict[str, str] = Field(
         default_factory=dict,
         description="Mapping of Phabricator username to GitHub username",
+    )
+    github_user_ids: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Mapping of Phabricator username to GitHub numeric user ID",
     )
     unresolved_users: List[UnresolvedUser] = Field(
         default_factory=list,
