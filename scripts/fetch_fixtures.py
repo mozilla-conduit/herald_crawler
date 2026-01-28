@@ -185,8 +185,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Get credentials from environment (support both variable names)
-    session_cookie = os.environ.get("PHABRICATOR_SESSION_COOKIE") or os.environ.get("PHAB_SESSION_COOKIE")
+    # Get credentials from environment
+    session_cookie = os.environ.get("PHABRICATOR_SESSION_COOKIE")
 
     if not session_cookie:
         print("ERROR: No authentication provided!")

@@ -1,11 +1,14 @@
 """HTTP client for fetching Phabricator pages."""
 
+import logging
 import os
 import time
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 from herald_scraper.exceptions import AuthenticationError
 
@@ -95,15 +98,30 @@ class HeraldClient:
 
         response = self._session.get(full_url, allow_redirects=False, timeout=self.timeout)
 
-        if response.status_code == 302:
+        # Handle redirects
+        if response.status_code in (301, 302, 303, 307, 308):
             location = response.headers.get("Location", "")
             if "/auth/" in location:
                 raise AuthenticationError(
                     f"Authentication required. Redirect to: {location}"
                 )
+            # Follow non-auth redirects
+            logger.debug(f"Following redirect from {full_url} to {location}")
+            if location.startswith("/"):
+                location = f"{self.base_url}{location}"
+            response = self._session.get(location, timeout=self.timeout)
 
         response.raise_for_status()
-        return response.text
+
+        # Check for login page returned with 200 OK (Phabricator sometimes
+        # serves login page directly instead of redirecting)
+        content = response.text
+        if "<title>Login</title>" in content:
+            raise AuthenticationError(
+                f"Authentication required. Login page returned for: {full_url}"
+            )
+
+        return content
 
     def fetch_listing(self) -> str:
         """

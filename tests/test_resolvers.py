@@ -116,12 +116,14 @@ class TestGroupCollector:
 
     def test_fetch_group_success(self, collector, mock_client):
         """Test successfully fetching a group."""
-        # Load fixture
-        fixture_path = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        if not fixture_path.exists():
-            pytest.skip("omc-reviewers fixture not found")
+        # Load fixtures
+        project_fixture = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        members_fixture = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
+        if not project_fixture.exists() or not members_fixture.exists():
+            pytest.skip("omc-reviewers fixtures not found")
 
-        mock_client.fetch_project.return_value = fixture_path.read_text()
+        mock_client.fetch_project.return_value = project_fixture.read_text()
+        mock_client.fetch_project_members.return_value = members_fixture.read_text()
 
         group = collector.fetch_group("omc-reviewers")
 
@@ -129,15 +131,19 @@ class TestGroupCollector:
         assert group.id == "omc-reviewers"
         assert group.display_name == "omc-reviewers"
         assert isinstance(group.members, list)
+        assert len(group.members) == 9  # Expected from members page
         mock_client.fetch_project.assert_called_once_with("omc-reviewers")
+        mock_client.fetch_project_members.assert_called_once_with("171")
 
     def test_fetch_group_caching(self, collector, mock_client):
         """Test that groups are cached after first fetch."""
-        fixture_path = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        if not fixture_path.exists():
-            pytest.skip("omc-reviewers fixture not found")
+        project_fixture = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        members_fixture = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
+        if not project_fixture.exists() or not members_fixture.exists():
+            pytest.skip("omc-reviewers fixtures not found")
 
-        mock_client.fetch_project.return_value = fixture_path.read_text()
+        mock_client.fetch_project.return_value = project_fixture.read_text()
+        mock_client.fetch_project_members.return_value = members_fixture.read_text()
 
         # First fetch
         group1 = collector.fetch_group("omc-reviewers")
@@ -147,6 +153,7 @@ class TestGroupCollector:
         assert group1 is group2  # Same object from cache
         # Client should only be called once
         mock_client.fetch_project.assert_called_once()
+        mock_client.fetch_project_members.assert_called_once()
 
     def test_fetch_group_failure(self, collector, mock_client):
         """Test handling fetch failure."""
@@ -159,20 +166,30 @@ class TestGroupCollector:
     def test_collect_all_groups(self, collector, mock_client, sample_rules):
         """Test collecting all groups from rules."""
         # Load fixtures for both groups
-        omc_fixture = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        android_fixture = FIXTURES_DIR / "groups" / "android-reviewers.html"
+        omc_project = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        omc_members = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
+        android_project = FIXTURES_DIR / "groups" / "android-reviewers.html"
+        android_members = FIXTURES_DIR / "groups" / "android-reviewers-members.html"
 
-        if not omc_fixture.exists() or not android_fixture.exists():
+        if not all(f.exists() for f in [omc_project, omc_members, android_project, android_members]):
             pytest.skip("Group fixtures not found")
 
         def fetch_project_side_effect(slug):
             if slug == "omc-reviewers":
-                return omc_fixture.read_text()
+                return omc_project.read_text()
             elif slug == "android-reviewers":
-                return android_fixture.read_text()
+                return android_project.read_text()
             raise Exception(f"Unknown group: {slug}")
 
+        def fetch_members_side_effect(project_id):
+            if project_id == "171":  # omc-reviewers
+                return omc_members.read_text()
+            elif project_id == "200":  # android-reviewers
+                return android_members.read_text()
+            raise Exception(f"Unknown project_id: {project_id}")
+
         mock_client.fetch_project.side_effect = fetch_project_side_effect
+        mock_client.fetch_project_members.side_effect = fetch_members_side_effect
 
         groups = collector.collect_all_groups(sample_rules)
 
@@ -181,19 +198,28 @@ class TestGroupCollector:
         assert "android-reviewers" in groups
         assert isinstance(groups["omc-reviewers"], Group)
         assert isinstance(groups["android-reviewers"], Group)
+        assert len(groups["omc-reviewers"].members) == 9
+        assert len(groups["android-reviewers"].members) == 42
 
     def test_collect_all_groups_partial_failure(self, collector, mock_client, sample_rules):
         """Test collecting groups when some fail to fetch."""
-        omc_fixture = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        if not omc_fixture.exists():
-            pytest.skip("omc-reviewers fixture not found")
+        omc_project = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        omc_members = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
+        if not omc_project.exists() or not omc_members.exists():
+            pytest.skip("omc-reviewers fixtures not found")
 
         def fetch_project_side_effect(slug):
             if slug == "omc-reviewers":
-                return omc_fixture.read_text()
+                return omc_project.read_text()
             raise Exception(f"Failed to fetch: {slug}")
 
+        def fetch_members_side_effect(project_id):
+            if project_id == "171":  # omc-reviewers
+                return omc_members.read_text()
+            raise Exception(f"Failed to fetch members: {project_id}")
+
         mock_client.fetch_project.side_effect = fetch_project_side_effect
+        mock_client.fetch_project_members.side_effect = fetch_members_side_effect
 
         groups = collector.collect_all_groups(sample_rules)
 
@@ -204,11 +230,13 @@ class TestGroupCollector:
 
     def test_clear_cache(self, collector, mock_client):
         """Test clearing the cache."""
-        fixture_path = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        if not fixture_path.exists():
-            pytest.skip("omc-reviewers fixture not found")
+        project_fixture = FIXTURES_DIR / "groups" / "omc-reviewers.html"
+        members_fixture = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
+        if not project_fixture.exists() or not members_fixture.exists():
+            pytest.skip("omc-reviewers fixtures not found")
 
-        mock_client.fetch_project.return_value = fixture_path.read_text()
+        mock_client.fetch_project.return_value = project_fixture.read_text()
+        mock_client.fetch_project_members.return_value = members_fixture.read_text()
 
         # Fetch to populate cache
         collector.fetch_group("omc-reviewers")
@@ -237,9 +265,33 @@ class TestGroupCollectorIntegration:
             if not f.stem.endswith("-members")
         }
 
-    def test_collect_groups_with_fixtures(self, group_fixtures):
+    @pytest.fixture
+    def members_fixtures(self):
+        """Get all available members page fixtures."""
+        groups_dir = FIXTURES_DIR / "groups"
+        if not groups_dir.exists():
+            pytest.skip("Groups fixtures directory not found")
+        return {
+            f.stem.replace("-members", ""): f for f in groups_dir.glob("*-members.html")
+        }
+
+    # Project ID mapping for fixtures (extracted from project page fixtures)
+    PROJECT_IDS = {
+        "android-reviewers": "200",
+        "desktop-theme-reviewers": "141",
+        "dom-storage-reviewers": "147",
+        "geckodriver-reviewers": "232",
+        "geckoview-api-reviewers": "226",
+        "omc-reviewers": "171",
+        "profiler-reviewers": "190",
+        "reusable-components-reviewers-rotation": "185",
+        "sidebar-reviewers-rotation": "207",
+        "win-reviewers": "189",
+    }
+
+    def test_collect_groups_with_fixtures(self, group_fixtures, members_fixtures):
         """Test collecting groups using real fixture files."""
-        if not group_fixtures:
+        if not group_fixtures or not members_fixtures:
             pytest.skip("No group fixtures found")
 
         mock_client = MagicMock()
@@ -249,7 +301,15 @@ class TestGroupCollectorIntegration:
                 return group_fixtures[slug].read_text()
             raise Exception(f"No fixture for: {slug}")
 
+        def fetch_members_side_effect(project_id):
+            # Find the slug for this project_id
+            for slug, pid in self.PROJECT_IDS.items():
+                if pid == project_id and slug in members_fixtures:
+                    return members_fixtures[slug].read_text()
+            raise Exception(f"No members fixture for project_id: {project_id}")
+
         mock_client.fetch_project.side_effect = fetch_project_side_effect
+        mock_client.fetch_project_members.side_effect = fetch_members_side_effect
 
         collector = GroupCollector(mock_client)
 
@@ -282,6 +342,9 @@ class TestGroupCollectorIntegration:
             assert slug in groups
             assert isinstance(groups[slug], Group)
             assert groups[slug].id == slug
+            # Verify members were extracted from members page
+            if slug in members_fixtures:
+                assert len(groups[slug].members) > 0, f"Expected members for {slug}"
 
 
 class TestUsernameResolver:

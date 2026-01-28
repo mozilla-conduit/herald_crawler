@@ -1,10 +1,12 @@
 """Resolvers for collecting group membership and other PHID resolutions."""
 
 import logging
+import re
 import time
 from typing import Dict, List, Optional, Set, Tuple
 
 from herald_scraper.client import HeraldClient
+from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.models import Group, Rule, UnresolvedUser
 from herald_scraper.parsers import ProjectMembersPageParser, ProjectPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
@@ -56,7 +58,7 @@ class GroupCollector:
         Fetch and parse group info for a single group.
 
         Uses the dedicated members page (/project/members/{id}/) for authoritative
-        membership data. Falls back to timeline parsing if members page is unavailable.
+        membership data.
 
         Uses caching to avoid duplicate fetches.
 
@@ -84,46 +86,44 @@ class GroupCollector:
                 f"Parsed project info for {slug}: "
                 f"id={project_info['id']}, "
                 f"project_id={project_info.get('project_id')}, "
-                f"display_name={project_info['display_name']}, "
-                f"timeline_members={len(project_info['members'])}"
+                f"display_name={project_info['display_name']}"
             )
 
-            # Try to fetch members from dedicated members page
+            # Fetch members from dedicated members page
             members = []
             project_id = project_info.get("project_id")
             if project_id:
                 try:
-                    logger.debug(f"Fetching members page for {slug} (ID: {project_id})")
+                    logger.info(f"Fetching members page for {slug} (ID: {project_id})")
                     members_html = self.client.fetch_project_members(project_id)
-                    logger.debug(f"Fetched members page: {len(members_html)} bytes")
+                    logger.info(f"Fetched members page: {len(members_html)} bytes")
+
+                    # Check what links are in the page
+                    profile_links = re.findall(r'href="/p/([^"]+)/"', members_html)
+                    has_oi_link = "phui-oi-link" in members_html
+                    logger.info(f"Page has phui-oi-link: {has_oi_link}, profile links: {len(profile_links)}")
+
                     members_parser = ProjectMembersPageParser(members_html)
                     members = members_parser.extract_members()
                     logger.info(f"Got {len(members)} members from members page for {slug}")
 
-                    # If members page returned 0 members, it might be an auth issue
-                    # Fall back to timeline parsing which might have some members
-                    if len(members) == 0 and len(project_info["members"]) > 0:
+                    if len(members) == 0:
+                        # Log detailed info to help debug
                         logger.warning(
-                            f"Members page returned 0 members for {slug}, "
-                            f"but timeline has {len(project_info['members'])} members. "
-                            f"This may indicate an authentication issue. "
-                            f"Falling back to timeline members."
+                            f"No members extracted for {slug}. "
+                            f"HTML size: {len(members_html)} bytes, "
+                            f"has phui-oi-link: {has_oi_link}, "
+                            f"profile links found: {profile_links[:10]}"
                         )
-                        members = project_info["members"]
-                    elif len(members) == 0:
-                        logger.warning(
-                            f"No members found for {slug} from members page or timeline. "
-                            f"This may indicate an authentication issue or empty group."
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to fetch members page for {slug}: {e}")
-                    # Fall back to timeline parsing
-                    members = project_info["members"]
-                    logger.debug(f"Falling back to timeline: {len(members)} members")
+                        if not has_oi_link:
+                            logger.warning(f"HTML snippet: {members_html[:1000]}")
+                except AuthenticationError as e:
+                    logger.warning(
+                        f"Authentication required to fetch members for {slug}. "
+                        f"Group will have empty members list. Error: {e}"
+                    )
             else:
-                # No project_id, use timeline parsing fallback
-                logger.warning(f"No project_id found for {slug}, using timeline fallback")
-                members = project_info["members"]
+                logger.warning(f"No project_id found for {slug}, cannot fetch members")
 
             group = Group(
                 id=project_info["id"],
