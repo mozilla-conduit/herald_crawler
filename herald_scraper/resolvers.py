@@ -310,7 +310,7 @@ class UsernameResolver:
         groups: Dict[str, Group],
         max_users: Optional[int] = None,
         delay: float = 0.5,
-    ) -> Tuple[Dict[str, GitHubUser], List[UnresolvedUser]]:
+    ) -> Tuple[Dict[str, GitHubUser], List[UnresolvedUser], bool]:
         """
         Resolve all usernames found in rules and groups.
 
@@ -321,7 +321,8 @@ class UsernameResolver:
             delay: Delay between API requests in seconds
 
         Returns:
-            Tuple of (resolved_users dict, unresolved_users list)
+            Tuple of (resolved_users dict, unresolved_users list, hit_max_users flag)
+            hit_max_users is True if we stopped early due to max_users limit
         """
         # Extract all usernames
         group_slugs = set(groups.keys())
@@ -342,10 +343,12 @@ class UsernameResolver:
 
         resolved_users: Dict[str, GitHubUser] = {}
         count = 0
+        hit_max_users = False
 
         for username in sorted(all_refs.keys()):
             if max_users is not None and count >= max_users:
                 logger.info(f"Reached max_users limit ({max_users}), stopping")
+                hit_max_users = True
                 break
 
             github_user = self.resolve_username(username)
@@ -381,7 +384,7 @@ class UsernameResolver:
         logger.info(
             f"Resolved {len(resolved_users)} users, {len(unresolved_list)} unresolved"
         )
-        return resolved_users, unresolved_list
+        return resolved_users, unresolved_list, hit_max_users
 
     def clear_cache(self) -> None:
         """Clear the internal caches."""

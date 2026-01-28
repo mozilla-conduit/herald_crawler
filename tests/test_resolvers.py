@@ -518,7 +518,7 @@ class TestUsernameResolver:
 
         mock_people_client.resolve_github.side_effect = mock_resolve
 
-        github_users, unresolved = resolver.resolve_all(
+        github_users, unresolved, hit_max = resolver.resolve_all(
             sample_rules, sample_groups, delay=0
         )
 
@@ -527,6 +527,7 @@ class TestUsernameResolver:
         assert all(v.username.endswith("-gh") for v in github_users.values())
         assert all(v.user_id is not None for v in github_users.values())
         assert len(unresolved) == 0
+        assert hit_max is False  # No limit was set
 
     def test_resolve_all_partial_failure(self, resolver, mock_people_client, sample_rules, sample_groups):
         """Test resolving usernames with some failures."""
@@ -539,7 +540,7 @@ class TestUsernameResolver:
 
         mock_people_client.resolve_github.side_effect = mock_resolve
 
-        github_users, unresolved = resolver.resolve_all(
+        github_users, unresolved, hit_max = resolver.resolve_all(
             sample_rules, sample_groups, delay=0
         )
 
@@ -551,6 +552,7 @@ class TestUsernameResolver:
         assert len(unresolved) > 0
         unresolved_names = {u.phabricator_username for u in unresolved}
         assert "bob" in unresolved_names or "charlie" in unresolved_names
+        assert hit_max is False
 
     def test_resolve_all_max_users(self, resolver, mock_people_client):
         """Test limiting the number of users resolved."""
@@ -583,20 +585,22 @@ class TestUsernameResolver:
 
         mock_people_client.resolve_github.side_effect = mock_resolve
 
-        github_users, unresolved = resolver.resolve_all(
+        github_users, unresolved, hit_max = resolver.resolve_all(
             rules, {}, max_users=2, delay=0
         )
 
         # Should only resolve 2 users
         assert len(github_users) == 2
         assert mock_people_client.resolve_github.call_count == 2
+        assert hit_max is True  # Should indicate we hit the limit
 
     def test_resolve_all_empty_inputs(self, resolver, mock_people_client):
         """Test resolving with empty rules and groups."""
-        github_users, unresolved = resolver.resolve_all([], {}, delay=0)
+        github_users, unresolved, hit_max = resolver.resolve_all([], {}, delay=0)
 
         assert github_users == {}
         assert unresolved == []
+        assert hit_max is False
         mock_people_client.resolve_github.assert_not_called()
 
     def test_clear_cache(self, resolver, mock_people_client):

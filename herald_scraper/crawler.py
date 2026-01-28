@@ -181,7 +181,7 @@ class HeraldCrawler:
         existing_rule_ids: Set[str] = set()
         existing_groups: Dict[str, Group] = {}
         existing_github_users: Dict[str, GitHubUser] = {}
-        existing_unresolved: Set[str] = set()
+        existing_unresolved: Dict[str, str] = {}  # username -> reason
         existing_rules: List[Rule] = []
 
         if existing_output:
@@ -193,7 +193,7 @@ class HeraldCrawler:
                 if group.members  # non-empty members list
             }
             existing_github_users = dict(existing_output.github_users)
-            existing_unresolved = {u.phabricator_username for u in existing_output.unresolved_users}
+            existing_unresolved = {u.phabricator_username: u.reason for u in existing_output.unresolved_users}
             logger.info(
                 f"Resuming from existing output: {len(existing_rule_ids)} rules, "
                 f"{len(existing_groups)} groups (with members), "
@@ -247,10 +247,10 @@ class HeraldCrawler:
             # Pre-populate cache with existing data
             for username, gh_user in existing_github_users.items():
                 username_resolver._cache[username] = gh_user
-            for username in existing_unresolved:
-                username_resolver._unresolved[username] = "previously_unresolved"
+            for username, reason in existing_unresolved.items():
+                username_resolver._unresolved[username] = reason
 
-            new_users, new_unresolved = username_resolver.resolve_all(
+            new_users, new_unresolved, hit_max_users = username_resolver.resolve_all(
                 rules, groups, max_users=max_users, delay=people_client.delay
             )
 
@@ -259,8 +259,8 @@ class HeraldCrawler:
             # Rebuild unresolved list from resolver's state
             unresolved_users = new_unresolved
 
-            # Check if we hit max_users limit
-            github_complete = max_users is None or len(new_users) < max_users
+            # GitHub resolution is complete if we didn't hit the max_users limit
+            github_complete = not hit_max_users
 
             # Populate author_github on rules
             for rule in rules:

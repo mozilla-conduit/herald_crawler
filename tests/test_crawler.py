@@ -718,3 +718,109 @@ class TestResumeFromExistingOutput:
         assert output.metadata is not None
         assert output.metadata.scrape_status is not None
         assert isinstance(output.metadata.scrape_status, ScrapeStatus)
+
+    def test_resume_preserves_original_unresolved_reasons(self) -> None:
+        """Test that original unresolved reasons are preserved on resume."""
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        existing_output = HeraldRulesOutput(
+            rules=[
+                Rule(
+                    id="H420",
+                    name="Test Rule",
+                    author="existinguser@example.com",
+                    status="active",
+                    type="differential-revision",
+                )
+            ],
+            unresolved_users=[
+                UnresolvedUser(
+                    phabricator_username="alice",
+                    reason="not_found",
+                    referenced_in=["H420"],
+                ),
+                UnresolvedUser(
+                    phabricator_username="bob",
+                    reason="no_github_linked",
+                    referenced_in=["H420"],
+                ),
+            ],
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=1,
+                total_groups=0,
+                phabricator_instance="phabricator.example.com",
+            ),
+        )
+
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = "<html><body></body></html>"
+
+        mock_people_client = Mock()
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=False,
+            people_client=mock_people_client,
+        )
+
+        # Original reasons should be preserved
+        unresolved_by_name = {u.phabricator_username: u for u in output.unresolved_users}
+        assert "alice" in unresolved_by_name
+        assert unresolved_by_name["alice"].reason == "not_found"
+        assert "bob" in unresolved_by_name
+        assert unresolved_by_name["bob"].reason == "no_github_linked"
+
+    def test_resume_prepopulates_github_cache_no_api_calls(self) -> None:
+        """Test that pre-populated GitHub users don't cause API calls."""
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        # Existing output with cached GitHub users
+        existing_output = HeraldRulesOutput(
+            rules=[
+                Rule(
+                    id="H420",
+                    name="Test Rule",
+                    author="alice@example.com",
+                    status="active",
+                    type="differential-revision",
+                )
+            ],
+            github_users={
+                "alice": GitHubUser(username="alice-gh", user_id=12345),
+            },
+            metadata=Metadata(
+                extracted_at=datetime.now(timezone.utc),
+                total_rules=1,
+                total_groups=0,
+                phabricator_instance="phabricator.example.com",
+            ),
+        )
+
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = "<html><body></body></html>"
+
+        mock_people_client = Mock()
+        mock_people_client.delay = 0
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=False,
+            people_client=mock_people_client,
+        )
+
+        # Alice was already cached, so no API calls should be made for her
+        # The resolve_github method should not be called for cached users
+        # (since there are no new rules with new users, no calls should be made)
+        mock_people_client.resolve_github.assert_not_called()
+        # Alice should still be in the output
+        assert "alice" in output.github_users
+        assert output.github_users["alice"].username == "alice-gh"
