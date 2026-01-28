@@ -443,6 +443,11 @@ class HeraldCrawler:
             try:
                 rule = self.extract_rule(rule_id)
                 if rule is not None:
+                    # Skip disabled rules
+                    if rule.status.lower() == "disabled":
+                        logger.debug(f"Skipping rule {rule_id}: disabled")
+                        continue
+
                     # Only include rules that add at least one reviewer
                     has_reviewers = any(
                         action.reviewers for action in rule.actions

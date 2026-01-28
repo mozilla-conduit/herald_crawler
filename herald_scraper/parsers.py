@@ -309,87 +309,132 @@ class RuleDetailPageParser:
         """Parse a single condition item div."""
         text = item.get_text(strip=True)
 
-        # Repository condition
+        # Repository conditions
         if text.startswith("Repository is any of"):
             repos = self._extract_handle_names(item)
-            return Condition(
-                type="repository",
-                operator="is-any-of",
-                value=repos
-            )
+            return Condition(type="repository", operator="is-any-of", value=repos)
 
-        # Revision status condition
+        if text.startswith("Repository is not any of"):
+            repos = self._extract_handle_names(item)
+            return Condition(type="repository", operator="is-not-any-of", value=repos)
+
+        if text.startswith("Repository projects include all of"):
+            projects = self._extract_handle_names(item)
+            return Condition(type="repository-projects", operator="include-all-of", value=projects)
+
+        # Revision status conditions
         if "Revision status is not any of" in text:
-            # Extract status values after "is not any of"
             match = re.search(r"is not any of\s+(.+)$", text)
             if match:
                 statuses = [s.strip() for s in match.group(1).split(",")]
-                return Condition(
-                    type="differential-revision-status",
-                    operator="is-not-any-of",
-                    value=statuses
-                )
+                return Condition(type="differential-revision-status", operator="is-not-any-of", value=statuses)
 
-        # Affected files matches regexp
+        if "Revision status is any of" in text:
+            match = re.search(r"is any of\s+(.+)$", text)
+            if match:
+                statuses = [s.strip() for s in match.group(1).split(",")]
+                return Condition(type="differential-revision-status", operator="is-any-of", value=statuses)
+
+        # Affected files conditions
         if "Affected files matches regexp" in text or "Affected files match regexp" in text:
-            # Extract regexp pattern between @ delimiters
             pattern = self._extract_regexp_pattern(text)
             if pattern:
-                return Condition(
-                    type="differential-diff-content",
-                    operator="matches-regexp",
-                    value=pattern
-                )
+                return Condition(type="differential-affected-files", operator="matches-regexp", value=pattern)
 
-        # Reviewers exists condition
-        if "Reviewers exists" in text:
-            return Condition(
-                type="differential-reviewers",
-                operator="exists",
-                value=True
-            )
+        if "Affected files does not match regexp" in text:
+            pattern = self._extract_regexp_pattern(text)
+            if pattern:
+                return Condition(type="differential-affected-files", operator="does-not-match-regexp", value=pattern)
 
-        # Reviewers does not exist
-        if "Reviewers does not exist" in text:
-            return Condition(
-                type="differential-reviewers",
-                operator="not-exists",
-                value=True
-            )
-
-        # Affected files contains (exact string match)
         if text.startswith("Affected files contains "):
             value = text.replace("Affected files contains ", "", 1)
-            return Condition(
-                type="differential-affected-files",
-                operator="contains",
-                value=value
-            )
+            return Condition(type="differential-affected-files", operator="contains", value=value)
 
-        # Changed file content does not contain
+        if text.startswith("Affected files does not contain "):
+            value = text.replace("Affected files does not contain ", "", 1)
+            return Condition(type="differential-affected-files", operator="does-not-contain", value=value)
+
+        # Changed file content conditions
         if text.startswith("Changed file content does not contain "):
             value = text.replace("Changed file content does not contain ", "", 1)
-            return Condition(
-                type="differential-file-content",
-                operator="does-not-contain",
-                value=value
-            )
+            return Condition(type="differential-file-content", operator="does-not-contain", value=value)
 
-        # Changed file content contains
         if text.startswith("Changed file content contains "):
             value = text.replace("Changed file content contains ", "", 1)
-            return Condition(
-                type="differential-file-content",
-                operator="contains",
-                value=value
-            )
+            return Condition(type="differential-file-content", operator="contains", value=value)
+
+        # Reviewers conditions
+        if "Reviewers exists" in text:
+            return Condition(type="differential-reviewers", operator="exists", value=True)
+
+        if "Reviewers does not exist" in text:
+            return Condition(type="differential-reviewers", operator="not-exists", value=True)
+
+        if text.startswith("Reviewers include none of"):
+            reviewers = self._extract_handle_names(item)
+            return Condition(type="differential-reviewers", operator="include-none-of", value=reviewers)
+
+        if text.startswith("Reviewers include any of"):
+            reviewers = self._extract_handle_names(item)
+            return Condition(type="differential-reviewers", operator="include-any-of", value=reviewers)
+
+        if text.startswith("Reviewers include all of"):
+            reviewers = self._extract_handle_names(item)
+            return Condition(type="differential-reviewers", operator="include-all-of", value=reviewers)
+
+        # Author conditions
+        if text.startswith("Author is any of"):
+            authors = self._extract_handle_names(item)
+            return Condition(type="differential-author", operator="is-any-of", value=authors)
+
+        if text.startswith("Author is not any of"):
+            authors = self._extract_handle_names(item)
+            return Condition(type="differential-author", operator="is-not-any-of", value=authors)
+
+        if text.startswith("Author's projects include none of"):
+            projects = self._extract_handle_names(item)
+            return Condition(type="differential-author-projects", operator="include-none-of", value=projects)
+
+        # Project tags conditions
+        if text.startswith("Project tags include any of"):
+            tags = self._extract_handle_names(item)
+            return Condition(type="differential-project-tags", operator="include-any-of", value=tags)
+
+        if text.startswith("Project tags include none of"):
+            tags = self._extract_handle_names(item)
+            return Condition(type="differential-project-tags", operator="include-none-of", value=tags)
+
+        if text.startswith("Project tags include all of"):
+            tags = self._extract_handle_names(item)
+            return Condition(type="differential-project-tags", operator="include-all-of", value=tags)
+
+        if text.startswith("Project tags added include any of"):
+            tags = self._extract_handle_names(item)
+            return Condition(type="differential-project-tags-added", operator="include-any-of", value=tags)
+
+        if text.startswith("Project tags added include all of"):
+            tags = self._extract_handle_names(item)
+            return Condition(type="differential-project-tags-added", operator="include-all-of", value=tags)
+
+        # Revision title condition
+        if text.startswith("Revision title contains"):
+            # Value is in the text after "contains"
+            value = text.replace("Revision title contains", "", 1).strip()
+            return Condition(type="differential-title", operator="contains", value=value)
+
+        # Is newly created condition
+        if text.startswith("Is newly created is"):
+            value = "true" in text.lower()
+            return Condition(type="differential-is-new", operator="is", value=value)
+
+        # Another Herald rule matches
+        if text.startswith("Another Herald rule matches:"):
+            # Extract rule reference from the link
+            rule_refs = self._extract_handle_names(item)
+            return Condition(type="herald-rule", operator="matches", value=rule_refs)
 
         # Generic fallback - log unknown condition types
-        return Condition(
-            type="unknown",
-            operator="unknown",
-            value=text
-        )
+        return Condition(type="unknown", operator="unknown", value=text)
 
     def _extract_handle_names(self, element: Tag) -> List[str]:
         """Extract names from phui-handle links within an element."""
@@ -483,10 +528,7 @@ class RuleDetailPageParser:
                 Reviewer(target=info.name, blocking=True, is_group=info.is_group)
                 for info in handle_info
             ]
-            return Action(
-                type="add-reviewers",
-                reviewers=reviewers
-            )
+            return Action(type="add-reviewers", reviewers=reviewers)
 
         # Add (non-blocking) reviewers
         if text.startswith("Add reviewers:") and "blocking" not in text.lower():
@@ -495,24 +537,51 @@ class RuleDetailPageParser:
                 Reviewer(target=info.name, blocking=False, is_group=info.is_group)
                 for info in handle_info
             ]
-            return Action(
-                type="add-reviewers",
-                reviewers=reviewers
-            )
+            return Action(type="add-reviewers", reviewers=reviewers)
 
         # Add subscribers
         if "Add subscribers:" in text:
             subscriber_names = self._extract_handle_names(item)
-            return Action(
-                type="add-subscribers",
-                targets=subscriber_names
-            )
+            return Action(type="add-subscribers", targets=subscriber_names)
+
+        # Add rule author as subscriber
+        if "Add rule author as subscriber" in text:
+            return Action(type="add-rule-author-subscriber", targets=[])
+
+        # Send email to rule author
+        if "Send an email to rule author" in text:
+            return Action(type="email-rule-author", targets=[])
+
+        # Do nothing
+        if text == "Do nothing." or text.startswith("Do nothing"):
+            return Action(type="do-nothing", targets=[])
+
+        # Require secure mail
+        if "Require mail content" in text and "secure" in text.lower():
+            return Action(type="require-secure-mail", targets=[])
+
+        # Add projects
+        if text.startswith("Add projects:"):
+            project_names = self._extract_handle_names(item)
+            return Action(type="add-projects", targets=project_names)
+
+        # Remove projects
+        if text.startswith("Remove projects:"):
+            project_names = self._extract_handle_names(item)
+            return Action(type="remove-projects", targets=project_names)
+
+        # Run build plans
+        if text.startswith("Run build plans:"):
+            plan_names = self._extract_handle_names(item)
+            return Action(type="run-build-plan", targets=plan_names)
+
+        # Add comment
+        if text.startswith("Add comment:"):
+            comment_text = text.replace("Add comment:", "", 1).strip()
+            return Action(type="add-comment", targets=[comment_text])
 
         # Generic fallback
-        return Action(
-            type="unknown",
-            targets=[text]
-        )
+        return Action(type="unknown", targets=[text])
 
 
 class ProjectPageParser:
