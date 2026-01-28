@@ -443,7 +443,14 @@ class HeraldCrawler:
             try:
                 rule = self.extract_rule(rule_id)
                 if rule is not None:
-                    rules.append(rule)
+                    # Only include rules that add at least one reviewer
+                    has_reviewers = any(
+                        action.reviewers for action in rule.actions
+                    )
+                    if has_reviewers:
+                        rules.append(rule)
+                    else:
+                        logger.debug(f"Skipping rule {rule_id}: no reviewers")
                 else:
                     logger.warning(f"Failed to parse rule {rule_id}")
             except requests.RequestException as e:
