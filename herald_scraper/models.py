@@ -39,7 +39,6 @@ class Rule(BaseModel):
     id: str
     name: str
     author: str
-    author_github: Optional[str] = Field(default=None, description="Author's GitHub username if resolved")
     status: str
     type: str
     conditions: List[Condition] = Field(default_factory=list)

@@ -262,12 +262,6 @@ class HeraldCrawler:
             # GitHub resolution is complete if we didn't hit the max_users limit
             github_complete = not hit_max_users
 
-            # Populate author_github on rules
-            for rule in rules:
-                author_lookup = rule.author.split("@")[0] if "@" in rule.author else rule.author
-                if author_lookup in github_users:
-                    rule.author_github = github_users[author_lookup].username
-
         parsed_url = urlparse(self.client.base_url)
         instance = parsed_url.netloc or self.client.base_url
 
