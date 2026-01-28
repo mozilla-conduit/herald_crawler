@@ -19,6 +19,9 @@ Usage:
 
     # Actually anonymize
     python scripts/anonymize_fixtures.py
+
+    # Save mapping file for use with rewrite_git_history.py
+    python scripts/anonymize_fixtures.py --save-mapping anonymization_mapping.json
 """
 
 import argparse
@@ -538,13 +541,26 @@ def main():
         action="store_true",
         help="Suppress verbose output",
     )
+    parser.add_argument(
+        "--save-mapping",
+        metavar="FILE",
+        help="Save anonymization mapping to JSON file (for use with rewrite_git_history.py)",
+    )
 
     args = parser.parse_args()
 
     if args.dry_run:
         print("=== DRY RUN - No files will be modified ===\n")
 
-    process_fixtures(dry_run=args.dry_run, verbose=not args.quiet, force=args.force)
+    anonymizer = process_fixtures(dry_run=args.dry_run, verbose=not args.quiet, force=args.force)
+
+    # Save mapping file if requested
+    if args.save_mapping:
+        mapping = anonymizer.get_mapping()
+        with open(args.save_mapping, "w") as f:
+            json.dump(mapping, f, indent=2, sort_keys=True)
+        if not args.quiet:
+            print(f"\nMapping saved to: {args.save_mapping}")
 
     if args.dry_run:
         print("\n=== DRY RUN COMPLETE - Run without --dry-run to apply changes ===")
