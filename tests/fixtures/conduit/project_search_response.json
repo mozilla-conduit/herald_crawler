@@ -1,0 +1,87 @@
+{
+  "result": {
+    "data": [
+      {
+        "id": 171,
+        "type": "PROJ",
+        "phid": "PHID-PROJ-aukz7voflcrfirwx5sim",
+        "fields": {
+          "name": "omc-reviewers",
+          "slug": "omc-reviewers",
+          "milestone": null,
+          "depth": 0,
+          "parent": null,
+          "icon": {
+            "key": "group",
+            "name": "Group",
+            "icon": "fa-users"
+          },
+          "color": {
+            "key": "blue",
+            "name": "Blue"
+          },
+          "policy": {
+            "view": "public",
+            "edit": "admin",
+            "join": "no-one"
+          }
+        },
+        "attachments": {
+          "members": {
+            "members": [
+              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa01"},
+              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa02"},
+              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa03"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 245,
+        "type": "PROJ",
+        "phid": "PHID-PROJ-bbbbbbbbbbbbbbbbbbbb",
+        "fields": {
+          "name": "Android Reviewers",
+          "slug": "android-reviewers",
+          "milestone": null,
+          "depth": 0,
+          "parent": null,
+          "icon": {
+            "key": "group",
+            "name": "Group",
+            "icon": "fa-users"
+          },
+          "color": {
+            "key": "green",
+            "name": "Green"
+          },
+          "policy": {
+            "view": "public",
+            "edit": "admin",
+            "join": "no-one"
+          }
+        },
+        "attachments": {
+          "members": {
+            "members": [
+              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa04"},
+              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa05"}
+            ]
+          }
+        }
+      }
+    ],
+    "maps": {},
+    "query": {
+      "queryKey": null
+    },
+    "cursor": {
+      "limit": 100,
+      "after": null,
+      "before": null,
+      "order": null
+    }
+  },
+  "error_code": null,
+  "error_info": null
+}

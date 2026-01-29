@@ -407,3 +407,115 @@ class UsernameResolver:
         self._cache.clear()
         self._unresolved.clear()
         logger.debug("Username resolver cache cleared")
+
+
+class ConduitGroupCollector:
+    """Collects group membership using the Conduit API.
+
+    Uses project.search and user.search API methods to fetch group membership
+    data. More reliable and efficient than HTML scraping.
+
+    Example:
+        from herald_scraper.conduit_client import ConduitClient
+
+        conduit = ConduitClient(base_url="...", api_token="...")
+        collector = ConduitGroupCollector(conduit)
+        groups = collector.collect_all_groups(rules)
+    """
+
+    def __init__(self, client: "ConduitClient") -> None:
+        """
+        Initialize the ConduitGroupCollector.
+
+        Args:
+            client: ConduitClient instance for API calls
+        """
+        from herald_scraper.conduit_client import ConduitClient
+
+        self.client: ConduitClient = client
+        self._group_cache: Dict[str, Group] = {}
+        self._phid_to_username: Dict[str, str] = {}
+
+    def extract_group_slugs_from_rules(self, rules: List[Rule]) -> Set[str]:
+        """
+        Extract unique group slugs from rule reviewer actions.
+
+        Groups are identified by the is_group field set by the parser (based on
+        href pattern: /tag/ = group, /p/ = user). Falls back to '@' heuristic
+        if is_group is None.
+
+        Args:
+            rules: List of Rule objects to extract groups from
+
+        Returns:
+            Set of unique group slugs
+        """
+        group_slugs: Set[str] = set()
+
+        for rule in rules:
+            for action in rule.actions:
+                if action.reviewers:
+                    for reviewer in action.reviewers:
+                        # Use is_group field if available
+                        if reviewer.is_group is True:
+                            group_slugs.add(reviewer.target)
+                        elif reviewer.is_group is None:
+                            # Fallback: assume it's a group if no '@' (legacy behavior)
+                            if "@" not in reviewer.target:
+                                group_slugs.add(reviewer.target)
+                        # is_group == False means it's a user, skip
+
+        logger.debug(f"Extracted {len(group_slugs)} unique group slugs from {len(rules)} rules")
+        return group_slugs
+
+    def _resolve_phids_to_usernames(self, phids: List[str]) -> Dict[str, str]:
+        """
+        Resolve user PHIDs to usernames using user.search API.
+
+        Uses internal cache to avoid duplicate lookups.
+
+        Args:
+            phids: List of user PHIDs to resolve
+
+        Returns:
+            Dictionary mapping PHID to username
+        """
+        raise NotImplementedError("_resolve_phids_to_usernames not yet implemented")
+
+    def fetch_group(self, slug: str) -> Optional[Group]:
+        """
+        Fetch and parse group info for a single group using Conduit API.
+
+        Uses project.search with members attachment to get project info
+        and member PHIDs, then resolves PHIDs to usernames.
+
+        Uses caching to avoid duplicate fetches.
+
+        Args:
+            slug: Project/group slug (e.g., 'omc-reviewers')
+
+        Returns:
+            Group object if successful, None if not found or API error
+        """
+        raise NotImplementedError("fetch_group not yet implemented")
+
+    def collect_all_groups(
+        self, rules: List[Rule], max_groups: Optional[int] = None
+    ) -> Dict[str, Group]:
+        """
+        Collect all groups referenced in the given rules.
+
+        Args:
+            rules: List of Rule objects to collect groups from
+            max_groups: Optional limit on number of groups to collect
+
+        Returns:
+            Dictionary mapping group slugs to Group objects
+        """
+        raise NotImplementedError("collect_all_groups not yet implemented")
+
+    def clear_cache(self) -> None:
+        """Clear the internal caches."""
+        self._group_cache.clear()
+        self._phid_to_username.clear()
+        logger.debug("Conduit group collector cache cleared")

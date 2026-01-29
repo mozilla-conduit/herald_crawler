@@ -1,0 +1,93 @@
+{
+  "result": {
+    "data": [
+      {
+        "id": 1001,
+        "type": "USER",
+        "phid": "PHID-USER-aaaaaaaaaaaaaaaaaa01",
+        "fields": {
+          "username": "alice",
+          "realName": "Alice Smith",
+          "roles": ["verified", "approved", "activated"],
+          "policy": {
+            "view": "public",
+            "edit": "no-one"
+          }
+        },
+        "attachments": {}
+      },
+      {
+        "id": 1002,
+        "type": "USER",
+        "phid": "PHID-USER-aaaaaaaaaaaaaaaaaa02",
+        "fields": {
+          "username": "bob",
+          "realName": "Bob Jones",
+          "roles": ["verified", "approved", "activated"],
+          "policy": {
+            "view": "public",
+            "edit": "no-one"
+          }
+        },
+        "attachments": {}
+      },
+      {
+        "id": 1003,
+        "type": "USER",
+        "phid": "PHID-USER-aaaaaaaaaaaaaaaaaa03",
+        "fields": {
+          "username": "charlie",
+          "realName": "Charlie Brown",
+          "roles": ["verified", "approved", "activated"],
+          "policy": {
+            "view": "public",
+            "edit": "no-one"
+          }
+        },
+        "attachments": {}
+      },
+      {
+        "id": 1004,
+        "type": "USER",
+        "phid": "PHID-USER-aaaaaaaaaaaaaaaaaa04",
+        "fields": {
+          "username": "david",
+          "realName": "David Lee",
+          "roles": ["verified", "approved", "activated"],
+          "policy": {
+            "view": "public",
+            "edit": "no-one"
+          }
+        },
+        "attachments": {}
+      },
+      {
+        "id": 1005,
+        "type": "USER",
+        "phid": "PHID-USER-aaaaaaaaaaaaaaaaaa05",
+        "fields": {
+          "username": "eve",
+          "realName": "Eve Wilson",
+          "roles": ["verified", "approved", "activated"],
+          "policy": {
+            "view": "public",
+            "edit": "no-one"
+          }
+        },
+        "attachments": {}
+      }
+    ],
+    "maps": {},
+    "query": {
+      "queryKey": null
+    },
+    "cursor": {
+      "limit": 100,
+      "after": null,
+      "before": null,
+      "order": null
+    }
+  },
+  "error_code": null,
+  "error_info": null
+}
