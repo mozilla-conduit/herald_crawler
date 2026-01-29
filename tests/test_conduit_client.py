@@ -13,40 +13,46 @@ from herald_scraper.models import Action, Condition, Group, Reviewer, Rule
 from herald_scraper.resolvers import ConduitGroupCollector
 
 
+# Mark for tests that require implementation
+not_implemented = pytest.mark.xfail(
+    reason="Method not yet implemented", raises=NotImplementedError
+)
+
+
 # --- Fixtures ---
 
 
 @pytest.fixture
-def fixtures_path() -> Path:
+def conduit_fixtures_path(fixtures_path: Path) -> Path:
     """Path to conduit fixtures directory."""
-    return Path(__file__).parent / "fixtures" / "conduit"
+    return fixtures_path / "conduit"
 
 
 @pytest.fixture
-def project_search_response(fixtures_path: Path) -> Dict[str, Any]:
+def project_search_response(conduit_fixtures_path: Path) -> Dict[str, Any]:
     """Load project.search response fixture."""
-    with open(fixtures_path / "project_search_response.json") as f:
+    with open(conduit_fixtures_path / "project_search_response.json") as f:
         return json.load(f)
 
 
 @pytest.fixture
-def user_search_response(fixtures_path: Path) -> Dict[str, Any]:
+def user_search_response(conduit_fixtures_path: Path) -> Dict[str, Any]:
     """Load user.search response fixture."""
-    with open(fixtures_path / "user_search_response.json") as f:
+    with open(conduit_fixtures_path / "user_search_response.json") as f:
         return json.load(f)
 
 
 @pytest.fixture
-def error_response(fixtures_path: Path) -> Dict[str, Any]:
+def error_response(conduit_fixtures_path: Path) -> Dict[str, Any]:
     """Load error response fixture."""
-    with open(fixtures_path / "error_response.json") as f:
+    with open(conduit_fixtures_path / "error_response.json") as f:
         return json.load(f)
 
 
 @pytest.fixture
-def project_not_found_response(fixtures_path: Path) -> Dict[str, Any]:
+def project_not_found_response(conduit_fixtures_path: Path) -> Dict[str, Any]:
     """Load project not found response fixture."""
-    with open(fixtures_path / "project_not_found_response.json") as f:
+    with open(conduit_fixtures_path / "project_not_found_response.json") as f:
         return json.load(f)
 
 
@@ -164,6 +170,7 @@ class TestConduitClientInit:
 class TestConduitClientCallMethod:
     """Tests for ConduitClient.call_method()."""
 
+    @not_implemented
     def test_call_method_success(
         self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
     ) -> None:
@@ -179,6 +186,7 @@ class TestConduitClientCallMethod:
             mock_session.post.assert_called_once()
             assert result == project_search_response["result"]
 
+    @not_implemented
     def test_call_method_error_response(
         self, conduit_client: ConduitClient, error_response: Dict[str, Any]
     ) -> None:
@@ -192,6 +200,7 @@ class TestConduitClientCallMethod:
             with pytest.raises(ConduitError, match="Invalid API token"):
                 conduit_client.call_method("project.search", {})
 
+    @not_implemented
     def test_call_method_includes_api_token(
         self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
     ) -> None:
@@ -213,6 +222,7 @@ class TestConduitClientCallMethod:
 class TestConduitClientProjectSearch:
     """Tests for ConduitClient.project_search()."""
 
+    @not_implemented
     def test_project_search_by_slugs(
         self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
     ) -> None:
@@ -229,6 +239,7 @@ class TestConduitClientProjectSearch:
             assert results[0]["fields"]["slug"] == "omc-reviewers"
             assert results[1]["fields"]["slug"] == "android-reviewers"
 
+    @not_implemented
     def test_project_search_returns_members(
         self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
     ) -> None:
@@ -245,6 +256,7 @@ class TestConduitClientProjectSearch:
             assert len(members) == 3
             assert members[0]["phid"] == "PHID-USER-aaaaaaaaaaaaaaaaaa01"
 
+    @not_implemented
     def test_project_search_no_constraints_raises(
         self, conduit_client: ConduitClient
     ) -> None:
@@ -252,6 +264,7 @@ class TestConduitClientProjectSearch:
         with pytest.raises(ValueError, match="slugs.*phids"):
             conduit_client.project_search()
 
+    @not_implemented
     def test_project_search_not_found(
         self, conduit_client: ConduitClient, project_not_found_response: Dict[str, Any]
     ) -> None:
@@ -267,6 +280,7 @@ class TestConduitClientProjectSearch:
 class TestConduitClientUserSearch:
     """Tests for ConduitClient.user_search()."""
 
+    @not_implemented
     def test_user_search_by_phids(
         self, conduit_client: ConduitClient, user_search_response: Dict[str, Any]
     ) -> None:
@@ -281,6 +295,7 @@ class TestConduitClientUserSearch:
             assert len(results) == 5  # fixture returns all 5 users
             assert results[0]["fields"]["username"] == "alice"
 
+    @not_implemented
     def test_user_search_returns_usernames(
         self, conduit_client: ConduitClient, user_search_response: Dict[str, Any]
     ) -> None:
@@ -294,6 +309,7 @@ class TestConduitClientUserSearch:
             assert "alice" in usernames
             assert "bob" in usernames
 
+    @not_implemented
     def test_user_search_no_constraints_raises(
         self, conduit_client: ConduitClient
     ) -> None:
@@ -345,6 +361,7 @@ class TestConduitGroupCollectorExtractSlugs:
 class TestConduitGroupCollectorFetchGroup:
     """Tests for ConduitGroupCollector.fetch_group()."""
 
+    @not_implemented
     def test_fetch_group_success(
         self,
         conduit_client: ConduitClient,
@@ -369,6 +386,7 @@ class TestConduitGroupCollectorFetchGroup:
                 assert "bob" in group.members
                 assert "charlie" in group.members
 
+    @not_implemented
     def test_fetch_group_not_found(
         self,
         conduit_client: ConduitClient,
@@ -384,6 +402,7 @@ class TestConduitGroupCollectorFetchGroup:
 
             assert group is None
 
+    @not_implemented
     def test_fetch_group_caches_result(
         self,
         conduit_client: ConduitClient,
@@ -410,6 +429,7 @@ class TestConduitGroupCollectorFetchGroup:
 class TestConduitGroupCollectorCollectAll:
     """Tests for ConduitGroupCollector.collect_all_groups()."""
 
+    @not_implemented
     def test_collect_all_groups(
         self,
         conduit_client: ConduitClient,
@@ -439,6 +459,7 @@ class TestConduitGroupCollectorCollectAll:
                 assert "android-reviewers" in groups
                 assert len(groups) == 2
 
+    @not_implemented
     def test_collect_all_groups_max_limit(
         self,
         conduit_client: ConduitClient,

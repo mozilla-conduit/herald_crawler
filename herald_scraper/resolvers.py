@@ -1,9 +1,11 @@
 """Resolvers for collecting group membership and other PHID resolutions."""
 
+from __future__ import annotations
+
 import logging
 import re
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.exceptions import AuthenticationError
@@ -11,7 +13,43 @@ from herald_scraper.models import GitHubUser, Group, Rule, UnresolvedUser
 from herald_scraper.parsers import ProjectMembersPageParser, ProjectPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
 
+if TYPE_CHECKING:
+    from herald_scraper.conduit_client import ConduitClient
+
 logger = logging.getLogger(__name__)
+
+
+def extract_group_slugs_from_rules(rules: List[Rule]) -> Set[str]:
+    """
+    Extract unique group slugs from rule reviewer actions.
+
+    Groups are identified by the is_group field set by the parser (based on
+    href pattern: /tag/ = group, /p/ = user). Falls back to '@' heuristic
+    if is_group is None.
+
+    Args:
+        rules: List of Rule objects to extract groups from
+
+    Returns:
+        Set of unique group slugs
+    """
+    group_slugs: Set[str] = set()
+
+    for rule in rules:
+        for action in rule.actions:
+            if action.reviewers:
+                for reviewer in action.reviewers:
+                    # Use is_group field if available
+                    if reviewer.is_group is True:
+                        group_slugs.add(reviewer.target)
+                    elif reviewer.is_group is None:
+                        # Fallback: assume it's a group if no '@' (legacy behavior)
+                        if "@" not in reviewer.target:
+                            group_slugs.add(reviewer.target)
+                    # is_group == False means it's a user, skip
+
+    logger.debug(f"Extracted {len(group_slugs)} unique group slugs from {len(rules)} rules")
+    return group_slugs
 
 
 class GroupCollector:
@@ -31,9 +69,7 @@ class GroupCollector:
         """
         Extract unique group slugs from rule reviewer actions.
 
-        Groups are identified by the is_group field set by the parser (based on
-        href pattern: /tag/ = group, /p/ = user). Falls back to '@' heuristic
-        if is_group is None.
+        Delegates to the module-level function for implementation.
 
         Args:
             rules: List of Rule objects to extract groups from
@@ -41,23 +77,7 @@ class GroupCollector:
         Returns:
             Set of unique group slugs
         """
-        group_slugs: Set[str] = set()
-
-        for rule in rules:
-            for action in rule.actions:
-                if action.reviewers:
-                    for reviewer in action.reviewers:
-                        # Use is_group field if available
-                        if reviewer.is_group is True:
-                            group_slugs.add(reviewer.target)
-                        elif reviewer.is_group is None:
-                            # Fallback: assume it's a group if no '@' (legacy behavior)
-                            if "@" not in reviewer.target:
-                                group_slugs.add(reviewer.target)
-                        # is_group == False means it's a user, skip
-
-        logger.debug(f"Extracted {len(group_slugs)} unique group slugs from {len(rules)} rules")
-        return group_slugs
+        return extract_group_slugs_from_rules(rules)
 
     def fetch_group(self, slug: str) -> Optional[Group]:
         """
@@ -423,16 +443,14 @@ class ConduitGroupCollector:
         groups = collector.collect_all_groups(rules)
     """
 
-    def __init__(self, client: "ConduitClient") -> None:
+    def __init__(self, client: ConduitClient) -> None:
         """
         Initialize the ConduitGroupCollector.
 
         Args:
             client: ConduitClient instance for API calls
         """
-        from herald_scraper.conduit_client import ConduitClient
-
-        self.client: ConduitClient = client
+        self.client = client
         self._group_cache: Dict[str, Group] = {}
         self._phid_to_username: Dict[str, str] = {}
 
@@ -440,9 +458,7 @@ class ConduitGroupCollector:
         """
         Extract unique group slugs from rule reviewer actions.
 
-        Groups are identified by the is_group field set by the parser (based on
-        href pattern: /tag/ = group, /p/ = user). Falls back to '@' heuristic
-        if is_group is None.
+        Delegates to the module-level function for implementation.
 
         Args:
             rules: List of Rule objects to extract groups from
@@ -450,23 +466,7 @@ class ConduitGroupCollector:
         Returns:
             Set of unique group slugs
         """
-        group_slugs: Set[str] = set()
-
-        for rule in rules:
-            for action in rule.actions:
-                if action.reviewers:
-                    for reviewer in action.reviewers:
-                        # Use is_group field if available
-                        if reviewer.is_group is True:
-                            group_slugs.add(reviewer.target)
-                        elif reviewer.is_group is None:
-                            # Fallback: assume it's a group if no '@' (legacy behavior)
-                            if "@" not in reviewer.target:
-                                group_slugs.add(reviewer.target)
-                        # is_group == False means it's a user, skip
-
-        logger.debug(f"Extracted {len(group_slugs)} unique group slugs from {len(rules)} rules")
-        return group_slugs
+        return extract_group_slugs_from_rules(rules)
 
     def _resolve_phids_to_usernames(self, phids: List[str]) -> Dict[str, str]:
         """
