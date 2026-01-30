@@ -12,6 +12,7 @@ Prefixes used:
 - USER-xxxx: Phabricator usernames
 - GHID-xxxx: GitHub numeric IDs
 - GHUSER-xxxx: GitHub usernames
+- REALNAME-xxxx: Real names from Conduit API
 
 Usage:
     # Dry run (show what would change)
@@ -61,6 +62,7 @@ class Anonymizer:
         self.username_map: Dict[str, str] = {}
         self.github_id_map: Dict[str, str] = {}
         self.github_username_map: Dict[str, str] = {}
+        self.realname_map: Dict[str, str] = {}
 
     def get_fake_username(self, real_username: str) -> str:
         """Get a hashed username for a real username."""
@@ -80,18 +82,25 @@ class Anonymizer:
             self.github_username_map[real_username] = hash_value(real_username, "GHUSER-")
         return self.github_username_map[real_username]
 
+    def get_fake_realname(self, real_name: str) -> str:
+        """Get a hashed real name for a real name."""
+        if real_name not in self.realname_map:
+            self.realname_map[real_name] = hash_value(real_name, "REALNAME-")
+        return self.realname_map[real_name]
+
     def get_mapping(self) -> Dict[str, Dict[str, str]]:
         """Get the complete anonymization mapping (for debugging only)."""
         return {
             "usernames": self.username_map,
             "github_ids": self.github_id_map,
             "github_usernames": self.github_username_map,
+            "realnames": self.realname_map,
         }
 
 
 def is_already_anonymized(value: str) -> bool:
     """Check if a value has already been anonymized (has our prefix)."""
-    return value.startswith(("USER-", "GHID-", "GHUSER-"))
+    return value.startswith(("USER-", "GHID-", "GHUSER-", "REALNAME-"))
 
 
 def extract_usernames_from_html(content: str) -> Set[str]:
@@ -146,14 +155,31 @@ def extract_usernames_from_html(content: str) -> Set[str]:
     return usernames
 
 
-def extract_usernames_from_json(content: str, filename: str) -> Tuple[Set[str], Set[str], Set[str]]:
-    """Extract usernames, GitHub IDs, and GitHub usernames from JSON content."""
+def extract_usernames_from_json(content: str, filename: str) -> Tuple[Set[str], Set[str], Set[str], Set[str]]:
+    """Extract usernames, GitHub IDs, GitHub usernames, and real names from JSON content."""
     usernames = set()
     github_ids = set()
     github_usernames = set()
+    realnames = set()
 
     try:
         data = json.loads(content)
+
+        # Conduit API response (project.search or user.search)
+        if "result" in data and isinstance(data.get("result"), dict):
+            result = data["result"]
+            for item in result.get("data", []):
+                fields = item.get("fields", {})
+                # Extract username from user.search response
+                if "username" in fields:
+                    username = fields["username"]
+                    if username and not is_already_anonymized(username):
+                        usernames.add(username)
+                # Extract realName from user.search response
+                if "realName" in fields:
+                    realname = fields["realName"]
+                    if realname and not is_already_anonymized(realname):
+                        realnames.add(realname)
 
         # GraphQL response with GitHub ID and primaryUsername
         if "data" in data and data.get("data"):
@@ -181,16 +207,17 @@ def extract_usernames_from_json(content: str, filename: str) -> Tuple[Set[str], 
                 github_usernames.add(value)
 
         # Extract username from filename (e.g., username_graphql.json -> username)
+        # Only for people-directory files that are named after the user
         stem = Path(filename).stem
-        for suffix in ("_graphql", "_rest", ""):
+        for suffix in ("_graphql", "_rest"):
             if stem.endswith(suffix):
-                username = stem[:-len(suffix)] if suffix else stem
+                username = stem[:-len(suffix)]
                 if username and not username.startswith("nonexistent"):
                     if not is_already_anonymized(username):
                         usernames.add(username)
                 break
 
-        # Also check search_ prefix in filename
+        # Also check search_ prefix in filename (people-directory search fixtures)
         if stem.startswith("search_"):
             username = stem[7:]
             if username and not is_already_anonymized(username):
@@ -199,7 +226,7 @@ def extract_usernames_from_json(content: str, filename: str) -> Tuple[Set[str], 
     except json.JSONDecodeError:
         pass
 
-    return usernames, github_ids, github_usernames
+    return usernames, github_ids, github_usernames, realnames
 
 
 def anonymize_html(content: str, anonymizer: Anonymizer) -> str:
@@ -336,6 +363,24 @@ def anonymize_json(content: str, filename: str, anonymizer: Anonymizer) -> str:
         data = json.loads(content)
         modified = False
 
+        # Conduit API response (project.search or user.search)
+        if "result" in data and isinstance(data.get("result"), dict):
+            result = data["result"]
+            for item in result.get("data", []):
+                fields = item.get("fields", {})
+                # Anonymize username from user.search response
+                if "username" in fields and fields["username"]:
+                    real_username = fields["username"]
+                    if not is_already_anonymized(real_username):
+                        fields["username"] = anonymizer.get_fake_username(real_username)
+                        modified = True
+                # Anonymize realName from user.search response
+                if "realName" in fields and fields["realName"]:
+                    real_name = fields["realName"]
+                    if not is_already_anonymized(real_name):
+                        fields["realName"] = anonymizer.get_fake_realname(real_name)
+                        modified = True
+
         # GraphQL response with GitHub ID and primaryUsername
         if "data" in data and data.get("data"):
             profile = data["data"].get("profile", {})
@@ -382,10 +427,15 @@ def rename_file_if_needed(filepath: Path, anonymizer: Anonymizer) -> Path:
     if is_already_anonymized(stem) or stem.startswith("search_USER-"):
         return filepath
 
+    # Skip Conduit fixture files (they don't contain usernames in their names)
+    if "conduit" in filepath.parts:
+        return filepath
+
     # Check for username patterns in filename (e.g., username_graphql.json)
-    for file_suffix in ("_graphql", "_rest", ""):
+    # Only for people-directory files that follow the username_suffix pattern
+    for file_suffix in ("_graphql", "_rest"):
         if stem.endswith(file_suffix):
-            username_part = stem[:-len(file_suffix)] if file_suffix else stem
+            username_part = stem[:-len(file_suffix)]
             if username_part in anonymizer.username_map:
                 fake_username = anonymizer.username_map[username_part]
                 new_stem = fake_username + file_suffix
@@ -429,7 +479,7 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True, force: bool = F
                     anonymizer.get_fake_username(username)
 
         elif filepath.suffix == ".json":
-            usernames, github_ids, github_usernames = extract_usernames_from_json(
+            usernames, github_ids, github_usernames, realnames = extract_usernames_from_json(
                 content, filepath.name
             )
             for username in usernames:
@@ -438,6 +488,8 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True, force: bool = F
                 anonymizer.get_fake_github_id(gid)
             for gh_username in github_usernames:
                 anonymizer.get_fake_github_username(gh_username)
+            for realname in realnames:
+                anonymizer.get_fake_realname(realname)
 
         elif filepath.suffix == ".md":
             # Extract usernames from Markdown content
@@ -449,6 +501,7 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True, force: bool = F
         print(f"  Found {len(anonymizer.username_map)} usernames")
         print(f"  Found {len(anonymizer.github_id_map)} GitHub IDs")
         print(f"  Found {len(anonymizer.github_username_map)} GitHub usernames")
+        print(f"  Found {len(anonymizer.realname_map)} real names")
 
     # Second pass: anonymize content
     if verbose:

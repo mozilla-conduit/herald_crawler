@@ -2,47 +2,13 @@
   "result": {
     "data": [
       {
-        "id": 171,
+        "id": 200,
         "type": "PROJ",
-        "phid": "PHID-PROJ-aukz7voflcrfirwx5sim",
+        "phid": "PHID-PROJ-vvs47bz5fi55k2cc6emh",
         "fields": {
-          "name": "omc-reviewers",
-          "slug": "omc-reviewers",
-          "milestone": null,
-          "depth": 0,
-          "parent": null,
-          "icon": {
-            "key": "group",
-            "name": "Group",
-            "icon": "fa-users"
-          },
-          "color": {
-            "key": "blue",
-            "name": "Blue"
-          },
-          "policy": {
-            "view": "public",
-            "edit": "admin",
-            "join": "no-one"
-          }
-        },
-        "attachments": {
-          "members": {
-            "members": [
-              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa01"},
-              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa02"},
-              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa03"}
-            ]
-          }
-        }
-      },
-      {
-        "id": 245,
-        "type": "PROJ",
-        "phid": "PHID-PROJ-bbbbbbbbbbbbbbbbbbbb",
-        "fields": {
-          "name": "Android Reviewers",
+          "name": "android-reviewers",
           "slug": "android-reviewers",
+          "subtype": "default",
           "milestone": null,
           "depth": 0,
           "parent": null,
@@ -55,23 +21,418 @@
             "key": "green",
             "name": "Green"
           },
+          "spacePHID": null,
+          "dateCreated": 1709655669,
+          "dateModified": 1767633454,
           "policy": {
             "view": "public",
-            "edit": "admin",
+            "edit": "PHID-PLCY-iqmjxwicr4cbeymxkron",
             "join": "no-one"
-          }
+          },
+          "description": "Firefox for Android Reviewers"
         },
         "attachments": {
           "members": {
             "members": [
-              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa04"},
-              {"phid": "PHID-USER-aaaaaaaaaaaaaaaaaa05"}
+              {
+                "phid": "PHID-USER-io424dlf7a5y7w6u5eoj"
+              },
+              {
+                "phid": "PHID-USER-72vunn4hyp5oto4bseme"
+              },
+              {
+                "phid": "PHID-USER-rbzr7fgrhydx2he5igd3"
+              },
+              {
+                "phid": "PHID-USER-ndriie35plxzn5zg4isq"
+              },
+              {
+                "phid": "PHID-USER-m7as7lsok35qgsp2cq5b"
+              },
+              {
+                "phid": "PHID-USER-ohcrlg7rqxf52k7bjltg"
+              },
+              {
+                "phid": "PHID-USER-dfnpeic2c2tn2fm6aztw"
+              },
+              {
+                "phid": "PHID-USER-3dg4r3bkd6lmyejiowww"
+              },
+              {
+                "phid": "PHID-USER-j52syuur3gqiqkvjtwgd"
+              },
+              {
+                "phid": "PHID-USER-bzjotvetedtwuks65m35"
+              },
+              {
+                "phid": "PHID-USER-qdmy6uwlaqstyocjvvn7"
+              },
+              {
+                "phid": "PHID-USER-ggcknp5azvr5wzujx2sf"
+              },
+              {
+                "phid": "PHID-USER-bnizjyt7to5zgx7iamiz"
+              },
+              {
+                "phid": "PHID-USER-nnidfmtym7cflhvdew3v"
+              },
+              {
+                "phid": "PHID-USER-smcnqn6hfrvm6dk4nifj"
+              },
+              {
+                "phid": "PHID-USER-2m2lvrgncmcwp5nkwmvn"
+              },
+              {
+                "phid": "PHID-USER-sexye72pkedf3wt6ls5k"
+              },
+              {
+                "phid": "PHID-USER-6sv6tp4gujvlfycgrput"
+              },
+              {
+                "phid": "PHID-USER-kifvla4gjwjeljyvzjhc"
+              },
+              {
+                "phid": "PHID-USER-6icx7oyutmeinolkr4vd"
+              },
+              {
+                "phid": "PHID-USER-vmwjnkt4qm6xec3nr2g5"
+              },
+              {
+                "phid": "PHID-USER-3cfqqu5tiarmpgijqtba"
+              },
+              {
+                "phid": "PHID-USER-clxuoh7wl5bosudmqngi"
+              },
+              {
+                "phid": "PHID-USER-nrdneg3625d5dj3xsj5k"
+              },
+              {
+                "phid": "PHID-USER-2ncw2afhsc4blyh5qpzp"
+              },
+              {
+                "phid": "PHID-USER-2prosllijy5gjczovuqt"
+              },
+              {
+                "phid": "PHID-USER-vvwdtztkpaegz6ah5bqg"
+              },
+              {
+                "phid": "PHID-USER-f4rai7weuaesnujwuae6"
+              },
+              {
+                "phid": "PHID-USER-2s67pomkxc43sigkgf54"
+              },
+              {
+                "phid": "PHID-USER-thkt3dtxdfwf65g3yasc"
+              },
+              {
+                "phid": "PHID-USER-xcklhodkf23uzyuyzusi"
+              },
+              {
+                "phid": "PHID-USER-kecj6fzmr676mixitfez"
+              },
+              {
+                "phid": "PHID-USER-c2l2edgzlxmwsraefept"
+              },
+              {
+                "phid": "PHID-USER-fvt5a2xh5r7onb3j7hnf"
+              },
+              {
+                "phid": "PHID-USER-6hzykes5iijkc3wtz7uy"
+              },
+              {
+                "phid": "PHID-USER-uuytwybbth3oonyz7fml"
+              },
+              {
+                "phid": "PHID-USER-fdcsunoawhxldpsfwug2"
+              },
+              {
+                "phid": "PHID-USER-eis73eimh6daxvujgvtm"
+              },
+              {
+                "phid": "PHID-USER-nnobsx37nnu5rcd2vl6e"
+              },
+              {
+                "phid": "PHID-USER-k2gdw34sdjfhr754t6z3"
+              },
+              {
+                "phid": "PHID-USER-q3btxqyuencztpdrj6mq"
+              },
+              {
+                "phid": "PHID-USER-mxqbmkvabcnifvb7ydco"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": 141,
+        "type": "PROJ",
+        "phid": "PHID-PROJ-soplcsvp5g6wu5kols7p",
+        "fields": {
+          "name": "desktop-theme-reviewers",
+          "slug": "desktop-theme-reviewers",
+          "subtype": "default",
+          "milestone": null,
+          "depth": 0,
+          "parent": null,
+          "icon": {
+            "key": "group",
+            "name": "Group",
+            "icon": "fa-users"
+          },
+          "color": {
+            "key": "green",
+            "name": "Green"
+          },
+          "spacePHID": null,
+          "dateCreated": 1601058289,
+          "dateModified": 1760614926,
+          "policy": {
+            "view": "public",
+            "edit": "PHID-PLCY-mgwgg4fs2vi53whmno4g",
+            "join": "no-one"
+          },
+          "description": "Desktop Theme Reviewers Group\n\n\ufeff\ufeffhttps://firefox-source-docs.mozilla.org/code-quality/coding-style/css_guidelines.html"
+        },
+        "attachments": {
+          "members": {
+            "members": [
+              {
+                "phid": "PHID-USER-aeohsr3uj3t3lnpxj4i7"
+              },
+              {
+                "phid": "PHID-USER-asgyxtv3cyxddvwqjw63"
+              },
+              {
+                "phid": "PHID-USER-wuqyimat5wnrqtr656mo"
+              },
+              {
+                "phid": "PHID-USER-a4fd6usoyx75n6ewpcff"
+              },
+              {
+                "phid": "PHID-USER-decwx7mkwujenn3xeur3"
+              },
+              {
+                "phid": "PHID-USER-qe4lqa3y67pubdavtqwi"
+              },
+              {
+                "phid": "PHID-USER-zp4gy3jjzfehipsktf6x"
+              },
+              {
+                "phid": "PHID-USER-pro4mobntabgfr6q6kqu"
+              },
+              {
+                "phid": "PHID-USER-sqzi3myw3ybsofxmewmp"
+              },
+              {
+                "phid": "PHID-USER-sqfa4zdcqmocvjmh7eqa"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": 147,
+        "type": "PROJ",
+        "phid": "PHID-PROJ-k6ujxzfrrgiv4upn6tiq",
+        "fields": {
+          "name": "dom-storage-reviewers",
+          "slug": "dom-storage-reviewers",
+          "subtype": "default",
+          "milestone": null,
+          "depth": 0,
+          "parent": null,
+          "icon": {
+            "key": "group",
+            "name": "Group",
+            "icon": "fa-users"
+          },
+          "color": {
+            "key": "green",
+            "name": "Green"
+          },
+          "spacePHID": null,
+          "dateCreated": 1612388642,
+          "dateModified": 1764715517,
+          "policy": {
+            "view": "public",
+            "edit": "PHID-PLCY-fruw5kwn5s42zdu4gvtk",
+            "join": "no-one"
+          },
+          "description": "DOM Storage Team."
+        },
+        "attachments": {
+          "members": {
+            "members": [
+              {
+                "phid": "PHID-USER-ki7cxedppyoo7mvv6o6r"
+              },
+              {
+                "phid": "PHID-USER-5y6g7m6n2kydo53yezkb"
+              },
+              {
+                "phid": "PHID-USER-4b5kycm6obt7loobvrat"
+              },
+              {
+                "phid": "PHID-USER-cluzkujx45iif5fejoai"
+              },
+              {
+                "phid": "PHID-USER-rmwozladsmnwgkfvtzbd"
+              },
+              {
+                "phid": "PHID-USER-w3xgxc7csmj4jxo3ac5c"
+              },
+              {
+                "phid": "PHID-USER-bm5adgmlmltkqkya62e7"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": 232,
+        "type": "PROJ",
+        "phid": "PHID-PROJ-zx5xbfh3bjvhelfvqqvd",
+        "fields": {
+          "name": "geckodriver-reviewers",
+          "slug": "geckodriver-reviewers",
+          "subtype": "default",
+          "milestone": null,
+          "depth": 0,
+          "parent": null,
+          "icon": {
+            "key": "group",
+            "name": "Group",
+            "icon": "fa-users"
+          },
+          "color": {
+            "key": "green",
+            "name": "Green"
+          },
+          "spacePHID": null,
+          "dateCreated": 1761835813,
+          "dateModified": 1761835813,
+          "policy": {
+            "view": "public",
+            "edit": "PHID-PLCY-onnbosgrgoscjohb4477",
+            "join": "no-one"
+          },
+          "description": "Geckodriver Reviewers Group"
+        },
+        "attachments": {
+          "members": {
+            "members": [
+              {
+                "phid": "PHID-USER-dat4prqkqf43erltdjp3"
+              },
+              {
+                "phid": "PHID-USER-gbb4orrkgmnzw3b5jlmj"
+              },
+              {
+                "phid": "PHID-USER-jp26w7fkaeadar63vok2"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": 226,
+        "type": "PROJ",
+        "phid": "PHID-PROJ-7pl2vjxmol4ufn5xhrhv",
+        "fields": {
+          "name": "geckoview-api-reviewers",
+          "slug": "geckoview-api-reviewers",
+          "subtype": "default",
+          "milestone": null,
+          "depth": 0,
+          "parent": null,
+          "icon": {
+            "key": "group",
+            "name": "Group",
+            "icon": "fa-users"
+          },
+          "color": {
+            "key": "green",
+            "name": "Green"
+          },
+          "spacePHID": null,
+          "dateCreated": 1746720868,
+          "dateModified": 1747336955,
+          "policy": {
+            "view": "public",
+            "edit": "PHID-PLCY-bnofb747v54t6bd5vk62",
+            "join": "no-one"
+          },
+          "description": "People who are allowed to review changes to GeckoView API."
+        },
+        "attachments": {
+          "members": {
+            "members": [
+              {
+                "phid": "PHID-USER-m7as7lsok35qgsp2cq5b"
+              },
+              {
+                "phid": "PHID-USER-n65mahsof3iw653q75na"
+              },
+              {
+                "phid": "PHID-USER-c6de5rnxld25mqp4pngs"
+              },
+              {
+                "phid": "PHID-USER-dgf7bi3p7yaq7rusttk4"
+              },
+              {
+                "phid": "PHID-USER-q3btxqyuencztpdrj6mq"
+              },
+              {
+                "phid": "PHID-USER-bzjotvetedtwuks65m35"
+              },
+              {
+                "phid": "PHID-USER-vvwdtztkpaegz6ah5bqg"
+              },
+              {
+                "phid": "PHID-USER-nty7azncsi6bjhkzwtsg"
+              },
+              {
+                "phid": "PHID-USER-6hzykes5iijkc3wtz7uy"
+              },
+              {
+                "phid": "PHID-USER-fdcsunoawhxldpsfwug2"
+              },
+              {
+                "phid": "PHID-USER-uuytwybbth3oonyz7fml"
+              },
+              {
+                "phid": "PHID-USER-dn2p6nmnntc3pcwsvrhy"
+              }
             ]
           }
         }
       }
     ],
-    "maps": {},
+    "maps": {
+      "slugMap": {
+        "android-reviewers": {
+          "slug": "android-reviewers",
+          "projectPHID": "PHID-PROJ-vvs47bz5fi55k2cc6emh"
+        },
+        "desktop-theme-reviewers": {
+          "slug": "desktop-theme-reviewers",
+          "projectPHID": "PHID-PROJ-soplcsvp5g6wu5kols7p"
+        },
+        "dom-storage-reviewers": {
+          "slug": "dom-storage-reviewers",
+          "projectPHID": "PHID-PROJ-k6ujxzfrrgiv4upn6tiq"
+        },
+        "geckodriver-reviewers": {
+          "slug": "geckodriver-reviewers",
+          "projectPHID": "PHID-PROJ-zx5xbfh3bjvhelfvqqvd"
+        },
+        "geckoview-api-reviewers": {
+          "slug": "geckoview-api-reviewers",
+          "projectPHID": "PHID-PROJ-7pl2vjxmol4ufn5xhrhv"
+        }
+      }
+    },
     "query": {
       "queryKey": null
     },

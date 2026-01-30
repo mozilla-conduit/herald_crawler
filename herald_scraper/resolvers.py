@@ -480,7 +480,26 @@ class ConduitGroupCollector:
         Returns:
             Dictionary mapping PHID to username
         """
-        raise NotImplementedError("_resolve_phids_to_usernames not yet implemented")
+        if not phids:
+            return {}
+
+        # Filter out PHIDs we already have cached
+        uncached_phids = [p for p in phids if p not in self._phid_to_username]
+
+        if uncached_phids:
+            logger.debug(f"Resolving {len(uncached_phids)} user PHIDs via Conduit API")
+            try:
+                users = self.client.user_search(phids=uncached_phids)
+                for user in users:
+                    user_phid = user.get("phid")
+                    username = user.get("fields", {}).get("username")
+                    if user_phid and username:
+                        self._phid_to_username[user_phid] = username
+            except Exception as e:
+                logger.warning(f"Error resolving user PHIDs: {e}")
+
+        # Return mapping for requested PHIDs
+        return {p: self._phid_to_username[p] for p in phids if p in self._phid_to_username}
 
     def fetch_group(self, slug: str) -> Optional[Group]:
         """
@@ -497,7 +516,56 @@ class ConduitGroupCollector:
         Returns:
             Group object if successful, None if not found or API error
         """
-        raise NotImplementedError("fetch_group not yet implemented")
+        # Check cache first
+        if slug in self._group_cache:
+            logger.debug(f"Cache hit for group: {slug}")
+            return self._group_cache[slug]
+
+        try:
+            logger.info(f"Fetching group via Conduit API: {slug}")
+
+            # Fetch project with members attachment
+            projects = self.client.project_search(
+                slugs=[slug],
+                attachments={"members": True},
+            )
+
+            if not projects:
+                logger.warning(f"Project not found: {slug}")
+                return None
+
+            project = projects[0]
+            fields = project.get("fields", {})
+            display_name = fields.get("name", slug)
+
+            # Extract member PHIDs
+            member_phids = []
+            members_attachment = project.get("attachments", {}).get("members", {})
+            for member in members_attachment.get("members", []):
+                phid = member.get("phid")
+                if phid:
+                    member_phids.append(phid)
+
+            logger.debug(f"Found {len(member_phids)} member PHIDs for {slug}")
+
+            # Resolve PHIDs to usernames
+            phid_to_username = self._resolve_phids_to_usernames(member_phids)
+            members = [phid_to_username.get(p) for p in member_phids if p in phid_to_username]
+
+            group = Group(
+                id=slug,
+                display_name=display_name,
+                members=members,
+            )
+
+            # Cache the result
+            self._group_cache[slug] = group
+            logger.info(f"Collected group {slug}: {len(group.members)} members")
+            return group
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch group {slug}: {e}", exc_info=True)
+            return None
 
     def collect_all_groups(
         self, rules: List[Rule], max_groups: Optional[int] = None
@@ -512,7 +580,25 @@ class ConduitGroupCollector:
         Returns:
             Dictionary mapping group slugs to Group objects
         """
-        raise NotImplementedError("collect_all_groups not yet implemented")
+        group_slugs = self.extract_group_slugs_from_rules(rules)
+        groups: Dict[str, Group] = {}
+
+        for slug in sorted(group_slugs):
+            # Check if we've collected enough groups
+            if max_groups is not None and len(groups) >= max_groups:
+                logger.info(
+                    f"Collected {len(groups)} groups, stopping (max_groups={max_groups})"
+                )
+                break
+
+            group = self.fetch_group(slug)
+            if group:
+                groups[slug] = group
+            else:
+                logger.warning(f"Could not collect group: {slug}")
+
+        logger.info(f"Collected {len(groups)} of {len(group_slugs)} groups")
+        return groups
 
     def clear_cache(self) -> None:
         """Clear the internal caches."""

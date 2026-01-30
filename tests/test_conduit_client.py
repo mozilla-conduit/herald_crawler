@@ -13,12 +13,6 @@ from herald_scraper.models import Action, Condition, Group, Reviewer, Rule
 from herald_scraper.resolvers import ConduitGroupCollector
 
 
-# Mark for tests that require implementation
-not_implemented = pytest.mark.xfail(
-    reason="Method not yet implemented", raises=NotImplementedError
-)
-
-
 # --- Fixtures ---
 
 
@@ -170,7 +164,6 @@ class TestConduitClientInit:
 class TestConduitClientCallMethod:
     """Tests for ConduitClient.call_method()."""
 
-    @not_implemented
     def test_call_method_success(
         self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
     ) -> None:
@@ -186,7 +179,6 @@ class TestConduitClientCallMethod:
             mock_session.post.assert_called_once()
             assert result == project_search_response["result"]
 
-    @not_implemented
     def test_call_method_error_response(
         self, conduit_client: ConduitClient, error_response: Dict[str, Any]
     ) -> None:
@@ -200,7 +192,6 @@ class TestConduitClientCallMethod:
             with pytest.raises(ConduitError, match="Invalid API token"):
                 conduit_client.call_method("project.search", {})
 
-    @not_implemented
     def test_call_method_includes_api_token(
         self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
     ) -> None:
@@ -222,7 +213,6 @@ class TestConduitClientCallMethod:
 class TestConduitClientProjectSearch:
     """Tests for ConduitClient.project_search()."""
 
-    @not_implemented
     def test_project_search_by_slugs(
         self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
     ) -> None:
@@ -231,15 +221,15 @@ class TestConduitClientProjectSearch:
             mock_call.return_value = project_search_response["result"]
 
             results = conduit_client.project_search(
-                slugs=["omc-reviewers", "android-reviewers"],
+                slugs=["android-reviewers", "desktop-theme-reviewers"],
                 attachments={"members": True},
             )
 
-            assert len(results) == 2
-            assert results[0]["fields"]["slug"] == "omc-reviewers"
-            assert results[1]["fields"]["slug"] == "android-reviewers"
+            # Fixture contains 5 projects
+            assert len(results) == 5
+            # First project in fixture is android-reviewers
+            assert results[0]["fields"]["slug"] == "android-reviewers"
 
-    @not_implemented
     def test_project_search_returns_members(
         self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
     ) -> None:
@@ -248,15 +238,16 @@ class TestConduitClientProjectSearch:
             mock_call.return_value = project_search_response["result"]
 
             results = conduit_client.project_search(
-                slugs=["omc-reviewers"],
+                slugs=["android-reviewers"],
                 attachments={"members": True},
             )
 
             members = results[0]["attachments"]["members"]["members"]
-            assert len(members) == 3
-            assert members[0]["phid"] == "PHID-USER-aaaaaaaaaaaaaaaaaa01"
+            # First project (android-reviewers) has 42 members
+            assert len(members) == 42
+            # First member PHID from fixture
+            assert members[0]["phid"] == "PHID-USER-io424dlf7a5y7w6u5eoj"
 
-    @not_implemented
     def test_project_search_no_constraints_raises(
         self, conduit_client: ConduitClient
     ) -> None:
@@ -264,7 +255,6 @@ class TestConduitClientProjectSearch:
         with pytest.raises(ValueError, match="slugs.*phids"):
             conduit_client.project_search()
 
-    @not_implemented
     def test_project_search_not_found(
         self, conduit_client: ConduitClient, project_not_found_response: Dict[str, Any]
     ) -> None:
@@ -280,7 +270,6 @@ class TestConduitClientProjectSearch:
 class TestConduitClientUserSearch:
     """Tests for ConduitClient.user_search()."""
 
-    @not_implemented
     def test_user_search_by_phids(
         self, conduit_client: ConduitClient, user_search_response: Dict[str, Any]
     ) -> None:
@@ -289,13 +278,14 @@ class TestConduitClientUserSearch:
             mock_call.return_value = user_search_response["result"]
 
             results = conduit_client.user_search(
-                phids=["PHID-USER-aaaaaaaaaaaaaaaaaa01", "PHID-USER-aaaaaaaaaaaaaaaaaa02"]
+                phids=["PHID-USER-io424dlf7a5y7w6u5eoj", "PHID-USER-72vunn4hyp5oto4bseme"]
             )
 
-            assert len(results) == 5  # fixture returns all 5 users
-            assert results[0]["fields"]["username"] == "alice"
+            # Fixture returns 67 users
+            assert len(results) == 67
+            # First user has anonymized username
+            assert results[0]["fields"]["username"] == "USER-858a93f1"
 
-    @not_implemented
     def test_user_search_returns_usernames(
         self, conduit_client: ConduitClient, user_search_response: Dict[str, Any]
     ) -> None:
@@ -303,13 +293,13 @@ class TestConduitClientUserSearch:
         with patch.object(conduit_client, "call_method") as mock_call:
             mock_call.return_value = user_search_response["result"]
 
-            results = conduit_client.user_search(phids=["PHID-USER-xxx"])
+            results = conduit_client.user_search(phids=["PHID-USER-io424dlf7a5y7w6u5eoj"])
 
             usernames = [r["fields"]["username"] for r in results]
-            assert "alice" in usernames
-            assert "bob" in usernames
+            # Usernames are anonymized in fixtures
+            assert "USER-858a93f1" in usernames
+            assert "USER-4799c2f1" in usernames
 
-    @not_implemented
     def test_user_search_no_constraints_raises(
         self, conduit_client: ConduitClient
     ) -> None:
@@ -361,7 +351,6 @@ class TestConduitGroupCollectorExtractSlugs:
 class TestConduitGroupCollectorFetchGroup:
     """Tests for ConduitGroupCollector.fetch_group()."""
 
-    @not_implemented
     def test_fetch_group_success(
         self,
         conduit_client: ConduitClient,
@@ -373,20 +362,21 @@ class TestConduitGroupCollectorFetchGroup:
 
         with patch.object(conduit_client, "project_search") as mock_project:
             with patch.object(conduit_client, "user_search") as mock_user:
-                # Return only the first project (omc-reviewers)
+                # Return only the first project (android-reviewers)
                 mock_project.return_value = [project_search_response["result"]["data"][0]]
+                # Return first 3 users from the fixture
                 mock_user.return_value = user_search_response["result"]["data"][:3]
 
-                group = collector.fetch_group("omc-reviewers")
+                group = collector.fetch_group("android-reviewers")
 
                 assert group is not None
-                assert group.id == "omc-reviewers"
-                assert group.display_name == "omc-reviewers"
-                assert "alice" in group.members
-                assert "bob" in group.members
-                assert "charlie" in group.members
+                assert group.id == "android-reviewers"
+                assert group.display_name == "android-reviewers"
+                # Members should contain anonymized usernames from fixture
+                assert "USER-858a93f1" in group.members
+                assert "USER-4799c2f1" in group.members
+                assert "USER-f9f3e68f" in group.members
 
-    @not_implemented
     def test_fetch_group_not_found(
         self,
         conduit_client: ConduitClient,
@@ -402,7 +392,6 @@ class TestConduitGroupCollectorFetchGroup:
 
             assert group is None
 
-    @not_implemented
     def test_fetch_group_caches_result(
         self,
         conduit_client: ConduitClient,
@@ -418,9 +407,9 @@ class TestConduitGroupCollectorFetchGroup:
                 mock_user.return_value = user_search_response["result"]["data"][:3]
 
                 # First call
-                group1 = collector.fetch_group("omc-reviewers")
+                group1 = collector.fetch_group("android-reviewers")
                 # Second call should use cache
-                group2 = collector.fetch_group("omc-reviewers")
+                group2 = collector.fetch_group("android-reviewers")
 
                 assert group1 is group2
                 assert mock_project.call_count == 1  # Only called once
@@ -429,7 +418,6 @@ class TestConduitGroupCollectorFetchGroup:
 class TestConduitGroupCollectorCollectAll:
     """Tests for ConduitGroupCollector.collect_all_groups()."""
 
-    @not_implemented
     def test_collect_all_groups(
         self,
         conduit_client: ConduitClient,
@@ -447,7 +435,7 @@ class TestConduitGroupCollectorCollectAll:
                     if slugs and "omc-reviewers" in slugs:
                         return [project_search_response["result"]["data"][0]]
                     elif slugs and "android-reviewers" in slugs:
-                        return [project_search_response["result"]["data"][1]]
+                        return [project_search_response["result"]["data"][0]]
                     return []
 
                 mock_project.side_effect = project_side_effect
@@ -459,7 +447,6 @@ class TestConduitGroupCollectorCollectAll:
                 assert "android-reviewers" in groups
                 assert len(groups) == 2
 
-    @not_implemented
     def test_collect_all_groups_max_limit(
         self,
         conduit_client: ConduitClient,

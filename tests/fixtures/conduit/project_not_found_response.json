@@ -1,7 +1,9 @@
 {
   "result": {
     "data": [],
-    "maps": {},
+    "maps": {
+      "slugMap": {}
+    },
     "query": {
       "queryKey": null
     },

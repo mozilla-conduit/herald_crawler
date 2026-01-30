@@ -79,6 +79,32 @@ class ConduitClient:
                 time.sleep(self.delay - elapsed)
         self._last_request_time = time.time()
 
+    def _flatten_params(self, params: Any, data: Dict[str, str], prefix: str) -> None:
+        """
+        Flatten nested parameters into Phabricator's expected format.
+
+        Phabricator expects: constraints[slugs][0]=value
+
+        Args:
+            params: The parameters to flatten (dict, list, or scalar)
+            data: The output dictionary to add flattened params to
+            prefix: The current key prefix
+        """
+        if isinstance(params, dict):
+            for key, value in params.items():
+                new_prefix = f"{prefix}[{key}]" if prefix else key
+                self._flatten_params(value, data, new_prefix)
+        elif isinstance(params, list):
+            for i, value in enumerate(params):
+                new_prefix = f"{prefix}[{i}]"
+                self._flatten_params(value, data, new_prefix)
+        else:
+            # Convert booleans to strings Phabricator expects
+            if isinstance(params, bool):
+                data[prefix] = "true" if params else "false"
+            else:
+                data[prefix] = str(params) if params is not None else ""
+
     def call_method(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Call a Conduit API method.
@@ -94,7 +120,29 @@ class ConduitClient:
             ConduitError: If the API returns an error
             requests.RequestException: If the HTTP request fails
         """
-        raise NotImplementedError("call_method not yet implemented")
+        self._rate_limit()
+
+        url = f"{self.base_url}/api/{method}"
+
+        # Build form data with API token and flattened params
+        data: Dict[str, str] = {"api.token": self.api_token}
+        if params:
+            self._flatten_params(params, data, "")
+
+        logger.debug(f"Calling Conduit method: {method}")
+        response = self._session.post(url, data=data, timeout=self.timeout)
+        response.raise_for_status()
+
+        result = response.json()
+
+        # Check for API errors
+        if result.get("error_code"):
+            raise ConduitError(
+                message=result.get("error_info", "Unknown error"),
+                error_code=result.get("error_code"),
+            )
+
+        return result.get("result", {})
 
     def project_search(
         self,
@@ -124,7 +172,42 @@ class ConduitClient:
             ConduitError: If the API returns an error
             ValueError: If neither slugs nor phids is provided
         """
-        raise NotImplementedError("project_search not yet implemented")
+        if not slugs and not phids:
+            raise ValueError("Either slugs or phids must be provided")
+
+        params: Dict[str, Any] = {"limit": limit}
+
+        constraints: Dict[str, Any] = {}
+        if slugs:
+            constraints["slugs"] = slugs
+        if phids:
+            constraints["phids"] = phids
+
+        params["constraints"] = constraints
+
+        if attachments:
+            params["attachments"] = attachments
+
+        all_results: List[Dict[str, Any]] = []
+        after_cursor: Optional[str] = None
+
+        while True:
+            if after_cursor:
+                params["after"] = after_cursor
+
+            result = self.call_method("project.search", params)
+            data = result.get("data", [])
+            all_results.extend(data)
+
+            # Check for pagination
+            cursor = result.get("cursor", {})
+            after_cursor = cursor.get("after")
+
+            if not after_cursor:
+                break
+
+        logger.debug(f"project_search returned {len(all_results)} projects")
+        return all_results
 
     def user_search(
         self,
@@ -151,4 +234,36 @@ class ConduitClient:
             ConduitError: If the API returns an error
             ValueError: If neither phids nor usernames is provided
         """
-        raise NotImplementedError("user_search not yet implemented")
+        if not phids and not usernames:
+            raise ValueError("Either phids or usernames must be provided")
+
+        params: Dict[str, Any] = {"limit": limit}
+
+        constraints: Dict[str, Any] = {}
+        if phids:
+            constraints["phids"] = phids
+        if usernames:
+            constraints["usernames"] = usernames
+
+        params["constraints"] = constraints
+
+        all_results: List[Dict[str, Any]] = []
+        after_cursor: Optional[str] = None
+
+        while True:
+            if after_cursor:
+                params["after"] = after_cursor
+
+            result = self.call_method("user.search", params)
+            data = result.get("data", [])
+            all_results.extend(data)
+
+            # Check for pagination
+            cursor = result.get("cursor", {})
+            after_cursor = cursor.get("after")
+
+            if not after_cursor:
+                break
+
+        logger.debug(f"user_search returned {len(all_results)} users")
+        return all_results

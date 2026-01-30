@@ -8,6 +8,7 @@ import sys
 import requests
 
 from herald_scraper.client import HeraldClient
+from herald_scraper.conduit_client import ConduitClient
 from herald_scraper.crawler import HeraldCrawler, atomic_write_json, load_existing_output
 from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.people_client import PeopleDirectoryClient
@@ -116,6 +117,13 @@ def main() -> int:
         help="Input file to resume from (defaults to output file if --resume is used)",
     )
 
+    # Conduit API option (alternative to HTML scraping for groups)
+    parser.add_argument(
+        "--conduit-token",
+        help="Conduit API token for group membership (or set PHABRICATOR_CONDUIT_TOKEN env var). "
+             "Preferred over HTML scraping.",
+    )
+
     # GitHub username resolution options
     parser.add_argument(
         "--no-resolve-github",
@@ -173,6 +181,25 @@ def main() -> int:
             elif args.resume:
                 logger.warning("--resume specified but no output file given, starting fresh")
 
+        # Set up Conduit client for group membership (preferred over HTML scraping)
+        conduit_client = None
+        conduit_token = args.conduit_token or os.environ.get("PHABRICATOR_CONDUIT_TOKEN")
+        if conduit_token:
+            base_url = args.url or os.environ.get("PHABRICATOR_URL", "")
+            if base_url:
+                conduit_client = ConduitClient(
+                    base_url=base_url,
+                    api_token=conduit_token,
+                    delay=args.delay,
+                    timeout=args.timeout,
+                )
+                logger.info("Using Conduit API for group membership collection")
+            else:
+                logger.warning(
+                    "Conduit token provided but no Phabricator URL. "
+                    "Falling back to HTML scraping for groups."
+                )
+
         # Set up People Directory client for GitHub resolution (enabled by default)
         people_client = None
         if not args.no_resolve_github:
@@ -195,6 +222,7 @@ def main() -> int:
             people_client=people_client,
             max_users=args.max_users,
             existing_output=existing_output,
+            conduit_client=conduit_client,
         )
 
         if args.output:

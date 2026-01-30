@@ -77,14 +77,14 @@ class ConduitFetcher:
         self._rate_limit()
 
         url = f"{self.base_url}/api/{method}"
-        data = {"api.token": self.api_token}
+
+        # Conduit API expects params as JSON-encoded values with specific key format
+        # Use the params.__json__ format which Phabricator accepts
+        data: Dict[str, Any] = {"api.token": self.api_token}
 
         if params:
-            for key, value in params.items():
-                if isinstance(value, (dict, list)):
-                    data[key] = json.dumps(value)
-                else:
-                    data[key] = value
+            # Flatten nested params using Phabricator's expected format
+            self._flatten_params(params, data, "")
 
         print(f"Calling: {method}")
         response = self.session.post(url, data=data)
@@ -97,6 +97,27 @@ class ConduitFetcher:
             raise Exception(f"Conduit error: {result.get('error_info')} (code: {result.get('error_code')})")
 
         return result
+
+    def _flatten_params(self, params: Any, data: Dict[str, str], prefix: str) -> None:
+        """
+        Flatten nested parameters into Phabricator's expected format.
+
+        Phabricator expects: constraints[slugs][0]=value
+        """
+        if isinstance(params, dict):
+            for key, value in params.items():
+                new_prefix = f"{prefix}[{key}]" if prefix else key
+                self._flatten_params(value, data, new_prefix)
+        elif isinstance(params, list):
+            for i, value in enumerate(params):
+                new_prefix = f"{prefix}[{i}]"
+                self._flatten_params(value, data, new_prefix)
+        else:
+            # Convert booleans to strings Phabricator expects
+            if isinstance(params, bool):
+                data[prefix] = "true" if params else "false"
+            else:
+                data[prefix] = str(params) if params is not None else ""
 
     def project_search(
         self,
@@ -197,6 +218,20 @@ def extract_member_phids_from_response(response: Dict[str, Any]) -> List[str]:
     return phids
 
 
+GROUPS_FIXTURES_DIR = Path(__file__).parent.parent / "tests" / "fixtures" / "groups"
+
+
+def extract_slugs_from_fixtures() -> List[str]:
+    """Extract project slugs from existing HTML fixture filenames."""
+    slugs = []
+    for f in GROUPS_FIXTURES_DIR.glob("*.html"):
+        # Skip members files
+        if f.stem.endswith("-members"):
+            continue
+        slugs.append(f.stem)
+    return sorted(slugs)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Fetch Conduit API responses for test fixtures",
@@ -213,6 +248,11 @@ def main() -> None:
         type=Path,
         metavar="FILE",
         help="Extract group slugs from existing herald_rules.json",
+    )
+    parser.add_argument(
+        "--from-fixtures",
+        action="store_true",
+        help="Extract group slugs from existing tests/fixtures/groups/*.html files",
     )
     parser.add_argument(
         "--users",
@@ -263,6 +303,11 @@ def main() -> None:
             rules_data = load_rules_output(args.from_rules)
             project_slugs = extract_group_slugs_from_rules(rules_data)
             print(f"Found {len(project_slugs)} groups: {', '.join(project_slugs[:10])}...")
+            project_slugs = project_slugs[: args.max_projects]
+        elif args.from_fixtures:
+            print(f"\n=== Loading groups from existing fixtures ===")
+            project_slugs = extract_slugs_from_fixtures()
+            print(f"Found {len(project_slugs)} groups: {', '.join(project_slugs)}")
             project_slugs = project_slugs[: args.max_projects]
         elif args.projects:
             project_slugs = args.projects

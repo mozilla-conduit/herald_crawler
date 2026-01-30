@@ -12,11 +12,12 @@ from urllib.parse import urlparse
 import requests
 
 from herald_scraper.client import HeraldClient
+from herald_scraper.conduit_client import ConduitClient
 from herald_scraper.exceptions import RuleParseError
 from herald_scraper.models import GitHubUser, Group, Rule, HeraldRulesOutput, Metadata, ScrapeStatus, UnresolvedUser
 from herald_scraper.parsers import ListingPageParser, RuleDetailPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
-from herald_scraper.resolvers import GroupCollector, UsernameResolver
+from herald_scraper.resolvers import ConduitGroupCollector, GroupCollector, UsernameResolver
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,7 @@ class HeraldCrawler:
         people_client: Optional[PeopleDirectoryClient] = None,
         max_users: Optional[int] = None,
         existing_output: Optional[HeraldRulesOutput] = None,
+        conduit_client: Optional[ConduitClient] = None,
     ) -> HeraldRulesOutput:
         """
         Extract all Herald rules and return complete output.
@@ -173,6 +175,7 @@ class HeraldCrawler:
             people_client: Optional PeopleDirectoryClient for GitHub username resolution
             max_users: Optional limit on number of users to resolve (stops resolving early)
             existing_output: Optional existing output to resume from (skip already-scraped items)
+            conduit_client: Optional ConduitClient for group membership via API (preferred over HTML scraping)
 
         Returns:
             HeraldRulesOutput with all extracted rules, groups, and metadata
@@ -222,12 +225,22 @@ class HeraldCrawler:
         groups: Dict[str, Group] = dict(existing_groups)
         groups_complete = True
         if extract_groups and rules:
-            logger.info("Collecting group membership for reviewer groups")
-            group_collector = GroupCollector(self.client)
+            if conduit_client:
+                # Use Conduit API (preferred)
+                logger.info("Collecting group membership via Conduit API")
+                group_collector = ConduitGroupCollector(conduit_client)
 
-            # Pre-populate cache with existing groups
-            for slug, group in existing_groups.items():
-                group_collector._cache[slug] = group
+                # Pre-populate cache with existing groups
+                for slug, group in existing_groups.items():
+                    group_collector._group_cache[slug] = group
+            else:
+                # Fall back to HTML scraping
+                logger.info("Collecting group membership via HTML scraping")
+                group_collector = GroupCollector(self.client)
+
+                # Pre-populate cache with existing groups
+                for slug, group in existing_groups.items():
+                    group_collector._cache[slug] = group
 
             all_groups = group_collector.collect_all_groups(rules, max_groups=max_groups)
             groups.update(all_groups)
