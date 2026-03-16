@@ -42,9 +42,7 @@ def main() -> int:
             4 - Configuration error
             130 - Interrupted by user
     """
-    parser = argparse.ArgumentParser(
-        description="Extract Herald rules from Phabricator"
-    )
+    parser = argparse.ArgumentParser(description="Extract Herald rules from Phabricator")
     parser.add_argument(
         "--url",
         help="Phabricator instance URL (or set PHABRICATOR_URL env var)",
@@ -54,7 +52,8 @@ def main() -> int:
         help="Session cookie for authentication (or set PHABRICATOR_SESSION_COOKIE env var)",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         help="Output file (default: stdout)",
     )
     parser.add_argument(
@@ -96,7 +95,8 @@ def main() -> int:
         help="Request timeout in seconds (default: 30.0)",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose logging",
     )
@@ -113,7 +113,8 @@ def main() -> int:
         help="Ignore existing output file and start fresh",
     )
     parser.add_argument(
-        "--input", "-i",
+        "--input",
+        "-i",
         help="Input file to resume from (defaults to output file if --resume is used)",
     )
 
@@ -121,7 +122,7 @@ def main() -> int:
     parser.add_argument(
         "--conduit-token",
         help="Conduit API token for group membership (or set PHABRICATOR_CONDUIT_TOKEN env var). "
-             "Preferred over HTML scraping.",
+        "Preferred over HTML scraping.",
     )
 
     # GitHub username resolution options

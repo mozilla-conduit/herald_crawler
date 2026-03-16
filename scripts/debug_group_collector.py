@@ -3,11 +3,12 @@
 
 import os
 import logging
-logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.resolvers import GroupCollector
 from herald_scraper.parsers import ProjectMembersPageParser
+
+logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
 
 cookie = os.environ.get('PHABRICATOR_SESSION_COOKIE', '')
 print(f'Cookie set: {bool(cookie)}')

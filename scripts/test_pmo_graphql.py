@@ -81,7 +81,7 @@ def query_github_id(session: requests.Session, username: str, verbose: bool = Fa
     }
 
     if verbose:
-        print(f"Step 1: Get GitHub ID")
+        print("Step 1: Get GitHub ID")
         print(f"POST {PMO_GRAPHQL_URL}")
         print(f"Payload: {json.dumps(payload, indent=2)}")
         print()
@@ -110,7 +110,7 @@ def query_github_username(session: requests.Session, github_id: str, verbose: bo
     url = PMO_GITHUB_USERNAME_URL.format(github_id=github_id)
 
     if verbose:
-        print(f"Step 2: Get GitHub username")
+        print("Step 2: Get GitHub username")
         print(f"GET {url}")
         print()
 

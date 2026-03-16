@@ -8,9 +8,10 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-logger = logging.getLogger(__name__)
 
 from herald_scraper.exceptions import AuthenticationError
+
+logger = logging.getLogger(__name__)
 
 
 class HeraldClient:
@@ -102,9 +103,7 @@ class HeraldClient:
         if response.status_code in (301, 302, 303, 307, 308):
             location = response.headers.get("Location", "")
             if "/auth/" in location:
-                raise AuthenticationError(
-                    f"Authentication required. Redirect to: {location}"
-                )
+                raise AuthenticationError(f"Authentication required. Redirect to: {location}")
             # Follow non-auth redirects
             logger.debug(f"Following redirect from {full_url} to {location}")
             if location.startswith("/"):

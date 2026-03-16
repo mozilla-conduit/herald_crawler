@@ -17,7 +17,6 @@ Output:
 
 from pathlib import Path
 from bs4 import BeautifulSoup
-import re
 
 fixtures_dir = Path("tests/fixtures/rules")
 rule_files = sorted(fixtures_dir.glob("rule_*.html"))

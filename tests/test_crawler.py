@@ -1,12 +1,10 @@
 """Tests for HeraldCrawler."""
 
 import json
-import tempfile
 from pathlib import Path
-from typing import Callable, List
-from unittest.mock import Mock, call
+from typing import List
+from unittest.mock import Mock
 
-import pytest
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.crawler import (
@@ -16,7 +14,6 @@ from herald_scraper.crawler import (
     load_existing_output,
     atomic_write_json,
 )
-from herald_scraper.exceptions import RuleParseError
 from herald_scraper.models import (
     Rule,
     Group,
@@ -202,7 +199,7 @@ class TestExtractRuleIdsPagination:
         mock_client.fetch_page.return_value = infinite_page_html
 
         crawler = HeraldCrawler(client=mock_client)
-        rule_ids = crawler.extract_rule_ids(max_pages=3)
+        crawler.extract_rule_ids(max_pages=3)
 
         # Should stop after max_pages
         assert mock_client.fetch_listing.call_count == 1
@@ -446,7 +443,9 @@ class TestLoadExistingOutput:
                     type="differential-revision",
                 )
             ],
-            groups={"test-group": Group(id="test-group", display_name="Test Group", members=["user1"])},
+            groups={
+                "test-group": Group(id="test-group", display_name="Test Group", members=["user1"])
+            },
             github_users={"user1": GitHubUser(username="user1-gh", user_id=12345)},
             metadata=Metadata(
                 extracted_at=datetime.now(timezone.utc),
@@ -722,7 +721,6 @@ class TestResumeFromExistingOutput:
     def test_resume_preserves_original_unresolved_reasons(self) -> None:
         """Test that original unresolved reasons are preserved on resume."""
         from datetime import datetime, timezone
-        from unittest.mock import patch
 
         existing_output = HeraldRulesOutput(
             rules=[
@@ -778,7 +776,6 @@ class TestResumeFromExistingOutput:
     def test_resume_prepopulates_github_cache_no_api_calls(self) -> None:
         """Test that pre-populated GitHub users don't cause API calls."""
         from datetime import datetime, timezone
-        from unittest.mock import patch
 
         # Existing output with cached GitHub users
         existing_output = HeraldRulesOutput(

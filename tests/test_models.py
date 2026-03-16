@@ -24,9 +24,7 @@ class TestCondition:
     def test_create_condition(self):
         """Test creating a basic condition."""
         condition = Condition(
-            type="differential-diff-content",
-            operator="matches-regexp",
-            value="^path/to/.*"
+            type="differential-diff-content", operator="matches-regexp", value="^path/to/.*"
         )
         assert condition.type == "differential-diff-content"
         assert condition.operator == "matches-regexp"
@@ -35,15 +33,13 @@ class TestCondition:
     def test_condition_to_dict(self):
         """Test serialization to dictionary."""
         condition = Condition(
-            type="differential-diff-content",
-            operator="matches-regexp",
-            value="^path/to/.*"
+            type="differential-diff-content", operator="matches-regexp", value="^path/to/.*"
         )
         data = condition.model_dump()
         assert data == {
             "type": "differential-diff-content",
             "operator": "matches-regexp",
-            "value": "^path/to/.*"
+            "value": "^path/to/.*",
         }
 
     def test_condition_from_dict(self):
@@ -51,7 +47,7 @@ class TestCondition:
         data = {
             "type": "differential-diff-content",
             "operator": "matches-regexp",
-            "value": "^path/to/.*"
+            "value": "^path/to/.*",
         }
         condition = Condition(**data)
         assert condition.type == data["type"]
@@ -60,22 +56,13 @@ class TestCondition:
 
     def test_condition_with_complex_value(self):
         """Test condition with list or dict value."""
-        condition = Condition(
-            type="repository",
-            operator="equals",
-            value=["repo1", "repo2"]
-        )
+        condition = Condition(type="repository", operator="equals", value=["repo1", "repo2"])
         assert condition.value == ["repo1", "repo2"]
 
     def test_condition_rejects_extra_fields(self):
         """Test that extra fields are rejected."""
         with pytest.raises(ValidationError):
-            Condition(
-                type="test",
-                operator="equals",
-                value="test",
-                extra_field="not allowed"
-            )
+            Condition(type="test", operator="equals", value="test", extra_field="not allowed")
 
 
 class TestReviewer:
@@ -112,7 +99,12 @@ class TestReviewer:
 
     def test_reviewer_with_github_username(self):
         """Test creating a reviewer with GitHub username and user ID."""
-        reviewer = Reviewer(target="user@example.com", blocking=True, github_username="octocat", github_user_id=12345)
+        reviewer = Reviewer(
+            target="user@example.com",
+            blocking=True,
+            github_username="octocat",
+            github_user_id=12345,
+        )
         assert reviewer.github_username == "octocat"
         assert reviewer.github_user_id == 12345
         data = reviewer.model_dump()
@@ -129,8 +121,8 @@ class TestAction:
             type="add-reviewers",
             reviewers=[
                 Reviewer(target="user@example.com", blocking=True),
-                Reviewer(target="group-name", blocking=False)
-            ]
+                Reviewer(target="group-name", blocking=False),
+            ],
         )
         assert action.type == "add-reviewers"
         assert len(action.reviewers) == 2
@@ -139,10 +131,7 @@ class TestAction:
 
     def test_create_action_with_targets(self):
         """Test creating an action with targets."""
-        action = Action(
-            type="add-subscribers",
-            targets=["user1@example.com", "user2@example.com"]
-        )
+        action = Action(type="add-subscribers", targets=["user1@example.com", "user2@example.com"])
         assert action.type == "add-subscribers"
         assert len(action.targets) == 2
         assert action.targets[0] == "user1@example.com"
@@ -150,8 +139,7 @@ class TestAction:
     def test_action_to_dict(self):
         """Test serialization to dictionary."""
         action = Action(
-            type="add-reviewers",
-            reviewers=[Reviewer(target="user@example.com", blocking=True)]
+            type="add-reviewers", reviewers=[Reviewer(target="user@example.com", blocking=True)]
         )
         data = action.model_dump()
         assert data["type"] == "add-reviewers"
@@ -162,9 +150,7 @@ class TestAction:
         """Test deserialization from dictionary."""
         data = {
             "type": "add-reviewers",
-            "reviewers": [
-                {"target": "user@example.com", "blocking": True}
-            ]
+            "reviewers": [{"target": "user@example.com", "blocking": True}],
         }
         action = Action(**data)
         assert action.type == "add-reviewers"
@@ -182,7 +168,7 @@ class TestRule:
             name="Test Rule",
             author="user@example.com",
             status="active",
-            type="differential-revision"
+            type="differential-revision",
         )
         assert rule.id == "H123"
         assert rule.name == "Test Rule"
@@ -202,19 +188,15 @@ class TestRule:
             type="differential-revision",
             conditions=[
                 Condition(
-                    type="differential-diff-content",
-                    operator="matches-regexp",
-                    value="^path/to/.*"
+                    type="differential-diff-content", operator="matches-regexp", value="^path/to/.*"
                 )
             ],
             actions=[
                 Action(
                     type="add-reviewers",
-                    reviewers=[
-                        Reviewer(target="reviewer@example.com", blocking=True)
-                    ]
+                    reviewers=[Reviewer(target="reviewer@example.com", blocking=True)],
                 )
-            ]
+            ],
         )
         assert len(rule.conditions) == 1
         assert len(rule.actions) == 1
@@ -229,19 +211,15 @@ class TestRule:
             type="differential-revision",
             conditions=[
                 Condition(
-                    type="differential-diff-content",
-                    operator="matches-regexp",
-                    value="^path/to/.*"
+                    type="differential-diff-content", operator="matches-regexp", value="^path/to/.*"
                 )
             ],
             actions=[
                 Action(
                     type="add-reviewers",
-                    reviewers=[
-                        Reviewer(target="reviewer@example.com", blocking=True)
-                    ]
+                    reviewers=[Reviewer(target="reviewer@example.com", blocking=True)],
                 )
-            ]
+            ],
         )
         data = rule.model_dump()
         assert data["id"] == "H123"
@@ -261,17 +239,15 @@ class TestRule:
                 {
                     "type": "differential-diff-content",
                     "operator": "matches-regexp",
-                    "value": "^path/to/.*"
+                    "value": "^path/to/.*",
                 }
             ],
             "actions": [
                 {
                     "type": "add-reviewers",
-                    "reviewers": [
-                        {"target": "reviewer@example.com", "blocking": True}
-                    ]
+                    "reviewers": [{"target": "reviewer@example.com", "blocking": True}],
                 }
-            ]
+            ],
         }
         rule = Rule(**data)
         assert rule.id == "H123"
@@ -287,7 +263,7 @@ class TestGroup:
         group = Group(
             id="group-slug",
             display_name="Group Display Name",
-            members=["user1@example.com", "user2@example.com"]
+            members=["user1@example.com", "user2@example.com"],
         )
         assert group.id == "group-slug"
         assert group.display_name == "Group Display Name"
@@ -295,24 +271,19 @@ class TestGroup:
 
     def test_group_empty_members(self):
         """Test group with no members."""
-        group = Group(
-            id="empty-group",
-            display_name="Empty Group"
-        )
+        group = Group(id="empty-group", display_name="Empty Group")
         assert group.members == []
 
     def test_group_to_dict(self):
         """Test serialization to dictionary."""
         group = Group(
-            id="group-slug",
-            display_name="Group Display Name",
-            members=["user1@example.com"]
+            id="group-slug", display_name="Group Display Name", members=["user1@example.com"]
         )
         data = group.model_dump()
         assert data == {
             "id": "group-slug",
             "display_name": "Group Display Name",
-            "members": ["user1@example.com"]
+            "members": ["user1@example.com"],
         }
 
 
@@ -325,7 +296,7 @@ class TestMetadata:
             extracted_at="2026-01-21T12:00:00Z",
             total_rules=123,
             total_groups=5,
-            phabricator_instance="phabricator.services.mozilla.com"
+            phabricator_instance="phabricator.services.mozilla.com",
         )
         assert metadata.extracted_at == datetime(2026, 1, 21, 12, 0, 0, tzinfo=timezone.utc)
         assert metadata.total_rules == 123
@@ -338,7 +309,7 @@ class TestMetadata:
             extracted_at="2026-01-21T12:00:00Z",
             total_rules=123,
             total_groups=5,
-            phabricator_instance="phabricator.services.mozilla.com"
+            phabricator_instance="phabricator.services.mozilla.com",
         )
         data = metadata.model_dump()
         assert data["extracted_at"] == datetime(2026, 1, 21, 12, 0, 0, tzinfo=timezone.utc)
@@ -351,9 +322,7 @@ class TestUnresolvedUser:
     def test_create_unresolved_user(self):
         """Test creating an unresolved user."""
         user = UnresolvedUser(
-            phabricator_username="alice",
-            reason="not_found",
-            referenced_in=["H420", "H422"]
+            phabricator_username="alice", reason="not_found", referenced_in=["H420", "H422"]
         )
         assert user.phabricator_username == "alice"
         assert user.reason == "not_found"
@@ -361,24 +330,19 @@ class TestUnresolvedUser:
 
     def test_unresolved_user_empty_referenced_in(self):
         """Test that referenced_in defaults to empty list."""
-        user = UnresolvedUser(
-            phabricator_username="bob",
-            reason="no_github_linked"
-        )
+        user = UnresolvedUser(phabricator_username="bob", reason="no_github_linked")
         assert user.referenced_in == []
 
     def test_unresolved_user_to_dict(self):
         """Test serialization to dictionary."""
         user = UnresolvedUser(
-            phabricator_username="charlie",
-            reason="error: timeout",
-            referenced_in=["H483"]
+            phabricator_username="charlie", reason="error: timeout", referenced_in=["H483"]
         )
         data = user.model_dump()
         assert data == {
             "phabricator_username": "charlie",
             "reason": "error: timeout",
-            "referenced_in": ["H483"]
+            "referenced_in": ["H483"],
         }
 
 
@@ -408,32 +372,30 @@ class TestHeraldRulesOutput:
                         Condition(
                             type="differential-diff-content",
                             operator="matches-regexp",
-                            value="^path/to/.*"
+                            value="^path/to/.*",
                         )
                     ],
                     actions=[
                         Action(
                             type="add-reviewers",
-                            reviewers=[
-                                Reviewer(target="reviewer-group", blocking=True)
-                            ]
+                            reviewers=[Reviewer(target="reviewer-group", blocking=True)],
                         )
-                    ]
+                    ],
                 )
             ],
             groups={
                 "reviewer-group": Group(
                     id="reviewer-group",
                     display_name="Reviewer Group",
-                    members=["alice@example.com", "bob@example.com"]
+                    members=["alice@example.com", "bob@example.com"],
                 )
             },
             metadata=Metadata(
                 extracted_at="2026-01-21T12:00:00Z",
                 total_rules=1,
                 total_groups=1,
-                phabricator_instance="phabricator.services.mozilla.com"
-            )
+                phabricator_instance="phabricator.services.mozilla.com",
+            ),
         )
         assert len(output.rules) == 1
         assert len(output.groups) == 1
@@ -454,22 +416,20 @@ class TestHeraldRulesOutput:
                             type="add-reviewers",
                             reviewers=[
                                 Reviewer(target="bob", blocking=True, github_username="bob-gh")
-                            ]
+                            ],
                         )
-                    ]
+                    ],
                 )
             ],
             github_users={
                 "alice": GitHubUser(username="alice-gh", user_id=12345),
-                "bob": GitHubUser(username="bob-gh", user_id=67890)
+                "bob": GitHubUser(username="bob-gh", user_id=67890),
             },
             unresolved_users=[
                 UnresolvedUser(
-                    phabricator_username="charlie",
-                    reason="not_found",
-                    referenced_in=["H123"]
+                    phabricator_username="charlie", reason="not_found", referenced_in=["H123"]
                 )
-            ]
+            ],
         )
         assert output.github_users["alice"].username == "alice-gh"
         assert output.github_users["alice"].user_id == 12345
@@ -486,22 +446,18 @@ class TestHeraldRulesOutput:
                     name="Test Rule",
                     author="user@example.com",
                     status="active",
-                    type="differential-revision"
+                    type="differential-revision",
                 )
             ],
             groups={
-                "group1": Group(
-                    id="group1",
-                    display_name="Group 1",
-                    members=["user@example.com"]
-                )
+                "group1": Group(id="group1", display_name="Group 1", members=["user@example.com"])
             },
             metadata=Metadata(
                 extracted_at="2026-01-21T12:00:00Z",
                 total_rules=1,
                 total_groups=1,
-                phabricator_instance="phabricator.services.mozilla.com"
-            )
+                phabricator_instance="phabricator.services.mozilla.com",
+            ),
         )
         data = output.model_dump()
         assert "rules" in data
@@ -521,22 +477,22 @@ class TestHeraldRulesOutput:
                     "status": "active",
                     "type": "differential-revision",
                     "conditions": [],
-                    "actions": []
+                    "actions": [],
                 }
             ],
             "groups": {
                 "group1": {
                     "id": "group1",
                     "display_name": "Group 1",
-                    "members": ["user@example.com"]
+                    "members": ["user@example.com"],
                 }
             },
             "metadata": {
                 "extracted_at": "2026-01-21T12:00:00Z",
                 "total_rules": 1,
                 "total_groups": 1,
-                "phabricator_instance": "phabricator.services.mozilla.com"
-            }
+                "phabricator_instance": "phabricator.services.mozilla.com",
+            },
         }
         output = HeraldRulesOutput(**data)
         assert len(output.rules) == 1
@@ -560,32 +516,26 @@ class TestHeraldRulesOutput:
                         Condition(
                             type="differential-diff-content",
                             operator="matches-regexp",
-                            value="^path/to/.*"
+                            value="^path/to/.*",
                         )
                     ],
                     actions=[
                         Action(
                             type="add-reviewers",
-                            reviewers=[
-                                Reviewer(target="reviewer@example.com", blocking=True)
-                            ]
+                            reviewers=[Reviewer(target="reviewer@example.com", blocking=True)],
                         )
-                    ]
+                    ],
                 )
             ],
             groups={
-                "group1": Group(
-                    id="group1",
-                    display_name="Group 1",
-                    members=["user@example.com"]
-                )
+                "group1": Group(id="group1", display_name="Group 1", members=["user@example.com"])
             },
             metadata=Metadata(
                 extracted_at="2026-01-21T12:00:00Z",
                 total_rules=1,
                 total_groups=1,
-                phabricator_instance="phabricator.services.mozilla.com"
-            )
+                phabricator_instance="phabricator.services.mozilla.com",
+            ),
         )
 
         # Serialize to JSON
@@ -634,5 +584,5 @@ class TestValidation:
                 extracted_at="2026-01-21T12:00:00Z",
                 total_rules="not a number",  # Should be int
                 total_groups=5,
-                phabricator_instance="phabricator.services.mozilla.com"
+                phabricator_instance="phabricator.services.mozilla.com",
             )

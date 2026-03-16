@@ -78,7 +78,7 @@ def main() -> None:
 
                 # Check for blocking status
                 if 'blocking' in text.lower():
-                    print(f"    -> Blocking: True")
+                    print("    -> Blocking: True")
 
 
 if __name__ == "__main__":

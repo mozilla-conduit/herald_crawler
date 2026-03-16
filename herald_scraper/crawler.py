@@ -14,7 +14,15 @@ import requests
 from herald_scraper.client import HeraldClient
 from herald_scraper.conduit_client import ConduitClient
 from herald_scraper.exceptions import RuleParseError
-from herald_scraper.models import GitHubUser, Group, Rule, HeraldRulesOutput, Metadata, ScrapeStatus, UnresolvedUser
+from herald_scraper.models import (
+    GitHubUser,
+    Group,
+    Rule,
+    HeraldRulesOutput,
+    Metadata,
+    ScrapeStatus,
+    UnresolvedUser,
+)
 from herald_scraper.parsers import ListingPageParser, RuleDetailPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
 from herald_scraper.resolvers import ConduitGroupCollector, GroupCollector, UsernameResolver
@@ -34,6 +42,7 @@ def _sort_rule_ids(rule_ids: List[str]) -> List[str]:
     Returns:
         Sorted list of rule IDs
     """
+
     def sort_key(rule_id: str) -> Tuple[int, int, str]:
         try:
             return (0, int(rule_id[1:]), rule_id)
@@ -192,11 +201,14 @@ class HeraldCrawler:
             existing_rules = list(existing_output.rules)
             # Only consider groups with non-empty members as "complete"
             existing_groups = {
-                slug: group for slug, group in existing_output.groups.items()
+                slug: group
+                for slug, group in existing_output.groups.items()
                 if group.members  # non-empty members list
             }
             existing_github_users = dict(existing_output.github_users)
-            existing_unresolved = {u.phabricator_username: u.reason for u in existing_output.unresolved_users}
+            existing_unresolved = {
+                u.phabricator_username: u.reason for u in existing_output.unresolved_users
+            }
             logger.info(
                 f"Resuming from existing output: {len(existing_rule_ids)} rules, "
                 f"{len(existing_groups)} groups (with members), "
@@ -212,7 +224,9 @@ class HeraldCrawler:
         # Filter out already-scraped rules
         new_rule_ids = [rid for rid in all_rule_ids if rid not in existing_rule_ids]
         if existing_rule_ids:
-            logger.info(f"Skipping {len(existing_rule_ids)} already-scraped rules, fetching {len(new_rule_ids)} new rules")
+            logger.info(
+                f"Skipping {len(existing_rule_ids)} already-scraped rules, fetching {len(new_rule_ids)} new rules"
+            )
 
         # Extract new rules
         new_rules = self.extract_rules(new_rule_ids)
@@ -343,9 +357,7 @@ class HeraldCrawler:
         # Reached max_pages limit
         yield parser, True
 
-    def extract_rule_ids(
-        self, max_pages: int = 100, max_rules: Optional[int] = None
-    ) -> List[str]:
+    def extract_rule_ids(self, max_pages: int = 100, max_rules: Optional[int] = None) -> List[str]:
         """
         Extract all rule IDs from listing pages, following pagination.
 
@@ -456,9 +468,7 @@ class HeraldCrawler:
                         continue
 
                     # Only include rules that add at least one reviewer
-                    has_reviewers = any(
-                        action.reviewers for action in rule.actions
-                    )
+                    has_reviewers = any(action.reviewers for action in rule.actions)
                     if has_reviewers:
                         rules.append(rule)
                     else:

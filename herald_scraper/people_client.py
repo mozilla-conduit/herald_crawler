@@ -9,8 +9,10 @@ import requests
 
 class GitHubResolution(NamedTuple):
     """Result of resolving a Phabricator username to GitHub."""
+
     username: Optional[str]
     user_id: Optional[int]
+
 
 logger = logging.getLogger(__name__)
 

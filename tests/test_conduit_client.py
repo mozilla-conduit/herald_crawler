@@ -12,7 +12,6 @@ from herald_scraper.conduit_client import ConduitClient, ConduitError
 from herald_scraper.models import Action, Condition, Group, Reviewer, Rule
 from herald_scraper.resolvers import ConduitGroupCollector
 
-
 # --- Fixtures ---
 
 
@@ -206,8 +205,9 @@ class TestConduitClientCallMethod:
 
             call_args = mock_session.post.call_args
             # Check that api.token is in the form data
-            assert "api.token" in call_args.kwargs.get("data", {}) or \
-                   "api.token" in (call_args.args[1] if len(call_args.args) > 1 else {})
+            assert "api.token" in call_args.kwargs.get("data", {}) or "api.token" in (
+                call_args.args[1] if len(call_args.args) > 1 else {}
+            )
 
 
 class TestConduitClientProjectSearch:
@@ -248,9 +248,7 @@ class TestConduitClientProjectSearch:
             # First member PHID from fixture
             assert members[0]["phid"] == "PHID-USER-io424dlf7a5y7w6u5eoj"
 
-    def test_project_search_no_constraints_raises(
-        self, conduit_client: ConduitClient
-    ) -> None:
+    def test_project_search_no_constraints_raises(self, conduit_client: ConduitClient) -> None:
         """Test that calling without slugs or phids raises ValueError."""
         with pytest.raises(ValueError, match="slugs.*phids"):
             conduit_client.project_search()
@@ -300,9 +298,7 @@ class TestConduitClientUserSearch:
             assert "USER-858a93f1" in usernames
             assert "USER-4799c2f1" in usernames
 
-    def test_user_search_no_constraints_raises(
-        self, conduit_client: ConduitClient
-    ) -> None:
+    def test_user_search_no_constraints_raises(self, conduit_client: ConduitClient) -> None:
         """Test that calling without phids or usernames raises ValueError."""
         with pytest.raises(ValueError, match="phids.*usernames"):
             conduit_client.user_search()
@@ -337,9 +333,7 @@ class TestConduitGroupCollectorExtractSlugs:
         assert "android-reviewers" in slugs
         assert "someuser" not in slugs  # is_group=False
 
-    def test_excludes_users(
-        self, conduit_client: ConduitClient, sample_rules: list[Rule]
-    ) -> None:
+    def test_excludes_users(self, conduit_client: ConduitClient, sample_rules: list[Rule]) -> None:
         """Test that users (is_group=False) are excluded."""
         collector = ConduitGroupCollector(conduit_client)
 

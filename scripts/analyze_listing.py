@@ -36,7 +36,6 @@ def analyze_listing():
             if rule_id[0] == "H" and rule_id[1:].isdigit():
                 # Get the link text and any nearby context
                 text = link.get_text(strip=True)
-                parent = link.parent
                 rule_links.append({
                     "id": rule_id,
                     "text": text,
@@ -91,7 +90,7 @@ def analyze_listing():
 
     # Print some examples
     if rules_info:
-        print(f"\nSample rules with details:\n")
+        print("\nSample rules with details:\n")
         for i, rule in enumerate(rules_info[:10]):
             print(f"{i+1}. {rule['id']}: {rule['text']}")
             if rule['characteristics']:

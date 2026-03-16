@@ -149,10 +149,10 @@ def main():
             if not github_id:
                 profile = graphql_response.get("data", {}).get("profile")
                 if profile:
-                    print(f"  -> User found, no GitHub ID linked")
+                    print("  -> User found, no GitHub ID linked")
                     results["found_no_github"] += 1
                 else:
-                    print(f"  -> User not found in directory")
+                    print("  -> User not found in directory")
                     results["not_found"] += 1
                 continue
 

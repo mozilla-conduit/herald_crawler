@@ -70,10 +70,10 @@ for rule_file in rule_files:
 
     # Look for specific patterns
     if "Global Rule" in html:
-        print(f"  ✓ Contains 'Global Rule'")
+        print("  ✓ Contains 'Global Rule'")
     if "Personal Rule" in html:
-        print(f"  ✓ Contains 'Personal Rule'")
+        print("  ✓ Contains 'Personal Rule'")
     if "Object Rule" in html:
-        print(f"  ✓ Contains 'Object Rule'")
+        print("  ✓ Contains 'Object Rule'")
 
     print()

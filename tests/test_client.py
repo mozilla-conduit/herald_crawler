@@ -111,7 +111,9 @@ class TestHeraldClientInit:
     def test_from_environment_missing_url_raises_error(self) -> None:
         """Test that missing PHABRICATOR_URL raises ValueError."""
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="PHABRICATOR_URL environment variable is required"):
+            with pytest.raises(
+                ValueError, match="PHABRICATOR_URL environment variable is required"
+            ):
                 HeraldClient.from_environment()
 
     def test_from_environment_invalid_delay_raises_error(self) -> None:

@@ -10,7 +10,6 @@ from herald_scraper.parsers import (
     ProjectMembersPageParser,
 )
 
-
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
@@ -199,62 +198,83 @@ class TestRuleDetailPageParser:
             assert isinstance(rule.conditions, list)
             assert isinstance(rule.actions, list)
 
-    @pytest.mark.parametrize("rule_file,expected", [
-        ("rule_H420.html", {
-            "id": "H420",
-            "name": "Blocked by omc-reviewers #1",
-            "author": "USER-605ce504",
-            "is_global": True,
-            "file_regexp": r"/?browser/locales/en-US/browser/(newtab/onboarding\.ftl|spotlight\.ftl|newtab/asrouter\.ftl|featureCallout\.ftl)",
-            "reviewers": ["omc-reviewers"],
-            "blocking": True,
-        }),
-        ("rule_H422.html", {
-            "id": "H422",
-            "name": "Blocked by omc-reviewers #2",
-            "author": "USER-605ce504",
-            "is_global": True,
-            "file_regexp": r"/?(browser|toolkit)/components/(asrouter|aboutwelcome|messagepreview|uitour|messaging-system)/",
-            "reviewers": ["omc-reviewers"],
-            "blocking": True,
-        }),
-        ("rule_H425.html", {
-            "id": "H425",
-            "name": "Blocked by android-reviewers",
-            "author": "USER-605ce504",
-            "is_global": True,
-            "file_regexp": r"/?mobile/android/(fenix|focus-android|android-components)",
-            "reviewers": ["android-reviewers"],
-            "blocking": True,
-        }),
-        ("rule_H432.html", {
-            "id": "H432",
-            "name": "Blocked by sidebar-reviewers-rotation",
-            "author": "USER-605ce504",
-            "is_global": True,
-            "file_regexp": r"/?browser/(components/sidebar/|base/content/browser-sidebar\.js|themes/shared/sidebar\.css)",
-            "reviewers": ["sidebar-reviewers-rotation"],
-            "blocking": True,
-        }),
-        ("rule_H483.html", {
-            "id": "H483",
-            "name": "Blocked by geckoview-api-reviewers",
-            "author": "USER-605ce504",
-            "is_global": True,
-            "file_regexp": r"/?mobile/android/geckoview/api.txt",
-            "reviewers": ["geckoview-api-reviewers"],
-            "blocking": True,
-        }),
-        ("rule_H507.html", {
-            "id": "H507",
-            "name": "Blocked by geckodriver-reviewers",
-            "author": "USER-605ce504",
-            "is_global": True,
-            "file_regexp": r"^/testing/(geckodriver|mozbase/rust|webdriver)",
-            "reviewers": ["geckodriver-reviewers"],
-            "blocking": True,
-        }),
-    ])
+    @pytest.mark.parametrize(
+        "rule_file,expected",
+        [
+            (
+                "rule_H420.html",
+                {
+                    "id": "H420",
+                    "name": "Blocked by omc-reviewers #1",
+                    "author": "USER-605ce504",
+                    "is_global": True,
+                    "file_regexp": r"/?browser/locales/en-US/browser/(newtab/onboarding\.ftl|spotlight\.ftl|newtab/asrouter\.ftl|featureCallout\.ftl)",
+                    "reviewers": ["omc-reviewers"],
+                    "blocking": True,
+                },
+            ),
+            (
+                "rule_H422.html",
+                {
+                    "id": "H422",
+                    "name": "Blocked by omc-reviewers #2",
+                    "author": "USER-605ce504",
+                    "is_global": True,
+                    "file_regexp": r"/?(browser|toolkit)/components/(asrouter|aboutwelcome|messagepreview|uitour|messaging-system)/",
+                    "reviewers": ["omc-reviewers"],
+                    "blocking": True,
+                },
+            ),
+            (
+                "rule_H425.html",
+                {
+                    "id": "H425",
+                    "name": "Blocked by android-reviewers",
+                    "author": "USER-605ce504",
+                    "is_global": True,
+                    "file_regexp": r"/?mobile/android/(fenix|focus-android|android-components)",
+                    "reviewers": ["android-reviewers"],
+                    "blocking": True,
+                },
+            ),
+            (
+                "rule_H432.html",
+                {
+                    "id": "H432",
+                    "name": "Blocked by sidebar-reviewers-rotation",
+                    "author": "USER-605ce504",
+                    "is_global": True,
+                    "file_regexp": r"/?browser/(components/sidebar/|base/content/browser-sidebar\.js|themes/shared/sidebar\.css)",
+                    "reviewers": ["sidebar-reviewers-rotation"],
+                    "blocking": True,
+                },
+            ),
+            (
+                "rule_H483.html",
+                {
+                    "id": "H483",
+                    "name": "Blocked by geckoview-api-reviewers",
+                    "author": "USER-605ce504",
+                    "is_global": True,
+                    "file_regexp": r"/?mobile/android/geckoview/api.txt",
+                    "reviewers": ["geckoview-api-reviewers"],
+                    "blocking": True,
+                },
+            ),
+            (
+                "rule_H507.html",
+                {
+                    "id": "H507",
+                    "name": "Blocked by geckodriver-reviewers",
+                    "author": "USER-605ce504",
+                    "is_global": True,
+                    "file_regexp": r"^/testing/(geckodriver|mozbase/rust|webdriver)",
+                    "reviewers": ["geckodriver-reviewers"],
+                    "blocking": True,
+                },
+            ),
+        ],
+    )
     def test_parse_rule_fixture(self, rule_file, expected):
         """Test parsing a specific rule fixture."""
         fixture_path = FIXTURES_DIR / "rules" / rule_file
@@ -267,46 +287,53 @@ class TestRuleDetailPageParser:
         # Extract all data
         rule_id = parser._extract_rule_id()
         rule_name = parser._extract_rule_name()
-        rule_type = parser._extract_rule_type()
+        parser._extract_rule_type()
         author = parser._extract_author()
         is_global = parser.is_global_rule()
         conditions = parser._extract_conditions()
         actions = parser._extract_actions()
 
         # Check basic metadata
-        assert rule_id == expected["id"], f"Rule ID mismatch"
-        assert rule_name == expected["name"], f"Rule name mismatch"
+        assert rule_id == expected["id"], "Rule ID mismatch"
+        assert rule_name == expected["name"], "Rule name mismatch"
         # Check author matches expected anonymized value
-        assert author == expected["author"], f"Author mismatch: got '{author}', expected '{expected['author']}'"
-        assert is_global == expected["is_global"], f"is_global mismatch: got {is_global}, expected {expected['is_global']}"
+        assert (
+            author == expected["author"]
+        ), f"Author mismatch: got '{author}', expected '{expected['author']}'"
+        assert (
+            is_global == expected["is_global"]
+        ), f"is_global mismatch: got {is_global}, expected {expected['is_global']}"
 
         # Check conditions - should have at least one
-        assert len(conditions) > 0, f"No conditions extracted"
+        assert len(conditions) > 0, "No conditions extracted"
 
         # Find file regexp condition
-        file_conditions = [c for c in conditions if "file" in c.type.lower() or "diff" in c.type.lower()]
-        assert len(file_conditions) > 0, f"No file/diff conditions found"
+        file_conditions = [
+            c for c in conditions if "file" in c.type.lower() or "diff" in c.type.lower()
+        ]
+        assert len(file_conditions) > 0, "No file/diff conditions found"
 
         # Check for expected regexp
         found_regexp = any(expected["file_regexp"] in str(c.value) for c in file_conditions)
         assert found_regexp, f"Expected regexp '{expected['file_regexp']}' not found"
 
         # Check actions - should have at least one
-        assert len(actions) > 0, f"No actions extracted"
+        assert len(actions) > 0, "No actions extracted"
 
         # Find add reviewers action
         reviewer_actions = [a for a in actions if "review" in a.type.lower()]
-        assert len(reviewer_actions) > 0, f"No reviewer actions found"
+        assert len(reviewer_actions) > 0, "No reviewer actions found"
 
         # Check that expected reviewers are present
         all_reviewers = []
         for action in reviewer_actions:
-            assert action.reviewers is not None, f"No reviewers in action"
+            assert action.reviewers is not None, "No reviewers in action"
             all_reviewers.extend([r.target for r in action.reviewers])
 
         for expected_reviewer in expected["reviewers"]:
-            assert expected_reviewer in all_reviewers, \
-                f"Expected reviewer '{expected_reviewer}' not found. Found: {all_reviewers}"
+            assert (
+                expected_reviewer in all_reviewers
+            ), f"Expected reviewer '{expected_reviewer}' not found. Found: {all_reviewers}"
 
         # Check blocking status
         if expected["blocking"]:
@@ -317,11 +344,10 @@ class TestRuleDetailPageParser:
                     if len(blocking_reviewers) > 0:
                         has_blocking = True
                         break
-            assert has_blocking, f"Expected blocking reviewers but found none"
+            assert has_blocking, "Expected blocking reviewers but found none"
 
     def test_extract_handle_info_detects_user_vs_group(self):
         """Test that _extract_handle_info correctly identifies users vs groups from href."""
-        from herald_scraper.parsers import HandleInfo
 
         # HTML with both user and group links
         html = """
@@ -462,43 +488,61 @@ class TestProjectPageParser:
         assert "members" in info
         assert isinstance(info["members"], list)
 
-    @pytest.mark.parametrize("fixture_file,expected", [
-        ("omc-reviewers.html", {
-            "slug": "omc-reviewers",
-            "project_id": "171",
-            "display_name": "omc-reviewers",
-            # Full timeline available - exact member verification
-            "member_count": 3,
-        }),
-        ("android-reviewers.html", {
-            "slug": "android-reviewers",
-            "project_id": "200",
-            "display_name": "android-reviewers",
-            # Large group with many members - verify minimum
-            "min_members": 30,
-        }),
-        ("sidebar-reviewers-rotation.html", {
-            "slug": "sidebar-reviewers-rotation",
-            "project_id": "207",
-            "display_name": "sidebar-reviewers-rotation",
-            # Timeline only shows removals, not initial members
-            "min_members": 0,
-        }),
-        ("geckoview-api-reviewers.html", {
-            "slug": "geckoview-api-reviewers",
-            "project_id": "226",
-            "display_name": "geckoview-api-reviewers",
-            # Only one addition visible in timeline
-            "member_count": 1,
-        }),
-        ("geckodriver-reviewers.html", {
-            "slug": "geckodriver-reviewers",
-            "project_id": "232",
-            "display_name": "geckodriver-reviewers",
-            # No member events in timeline - empty is acceptable
-            "min_members": 0,
-        }),
-    ])
+    @pytest.mark.parametrize(
+        "fixture_file,expected",
+        [
+            (
+                "omc-reviewers.html",
+                {
+                    "slug": "omc-reviewers",
+                    "project_id": "171",
+                    "display_name": "omc-reviewers",
+                    # Full timeline available - exact member verification
+                    "member_count": 3,
+                },
+            ),
+            (
+                "android-reviewers.html",
+                {
+                    "slug": "android-reviewers",
+                    "project_id": "200",
+                    "display_name": "android-reviewers",
+                    # Large group with many members - verify minimum
+                    "min_members": 30,
+                },
+            ),
+            (
+                "sidebar-reviewers-rotation.html",
+                {
+                    "slug": "sidebar-reviewers-rotation",
+                    "project_id": "207",
+                    "display_name": "sidebar-reviewers-rotation",
+                    # Timeline only shows removals, not initial members
+                    "min_members": 0,
+                },
+            ),
+            (
+                "geckoview-api-reviewers.html",
+                {
+                    "slug": "geckoview-api-reviewers",
+                    "project_id": "226",
+                    "display_name": "geckoview-api-reviewers",
+                    # Only one addition visible in timeline
+                    "member_count": 1,
+                },
+            ),
+            (
+                "geckodriver-reviewers.html",
+                {
+                    "slug": "geckodriver-reviewers",
+                    "project_id": "232",
+                    "display_name": "geckodriver-reviewers",
+                    # No member events in timeline - empty is acceptable
+                    "min_members": 0,
+                },
+            ),
+        ],
+    )
     def test_parse_project_fixture(self, fixture_file, expected):
         """Test parsing specific project fixtures with expected values."""
         fixture_path = FIXTURES_DIR / "groups" / fixture_file
@@ -510,28 +554,33 @@ class TestProjectPageParser:
         info = parser.extract_project_info()
 
         # Check slug
-        assert info["id"] == expected["slug"], \
-            f"Slug mismatch: got '{info['id']}', expected '{expected['slug']}'"
+        assert (
+            info["id"] == expected["slug"]
+        ), f"Slug mismatch: got '{info['id']}', expected '{expected['slug']}'"
 
         # Check project_id
-        assert info["project_id"] == expected["project_id"], \
-            f"Project ID mismatch: got '{info['project_id']}', expected '{expected['project_id']}'"
+        assert (
+            info["project_id"] == expected["project_id"]
+        ), f"Project ID mismatch: got '{info['project_id']}', expected '{expected['project_id']}'"
 
         # Check display name
-        assert info["display_name"] == expected["display_name"], \
-            f"Display name mismatch: got '{info['display_name']}', expected '{expected['display_name']}'"
+        assert (
+            info["display_name"] == expected["display_name"]
+        ), f"Display name mismatch: got '{info['display_name']}', expected '{expected['display_name']}'"
 
         # Check members
         assert isinstance(info["members"], list), "Members should be a list"
 
         if "member_count" in expected:
             # Check member count (names are anonymized with USER- prefix)
-            assert len(info["members"]) == expected["member_count"], \
-                f"Member count mismatch: got {len(info['members'])}, expected {expected['member_count']}"
+            assert (
+                len(info["members"]) == expected["member_count"]
+            ), f"Member count mismatch: got {len(info['members'])}, expected {expected['member_count']}"
         elif "min_members" in expected:
             # Check minimum member count
-            assert len(info["members"]) >= expected["min_members"], \
-                f"Expected at least {expected['min_members']} members, got {len(info['members'])}"
+            assert (
+                len(info["members"]) >= expected["min_members"]
+            ), f"Expected at least {expected['min_members']} members, got {len(info['members'])}"
 
     def test_extract_slug_from_tag_link(self):
         """Test extracting project slug from tag link in 'Looks Like' section."""
@@ -559,7 +608,7 @@ class TestProjectPageParser:
 
     def test_extract_project_id_not_found(self):
         """Test project ID extraction when members link is missing."""
-        html = '<html><body><div>No members link here</div></body></html>'
+        html = "<html><body><div>No members link here</div></body></html>"
         parser = ProjectPageParser(html)
         assert parser._extract_project_id() is None
 
@@ -596,26 +645,26 @@ class TestProjectPageParser:
 
     def test_extract_slug_minimal_html(self):
         """Test slug extraction with minimal HTML containing just title."""
-        html = '<html><head><title>my-project · Manage</title></head><body></body></html>'
+        html = "<html><head><title>my-project · Manage</title></head><body></body></html>"
         parser = ProjectPageParser(html)
         assert parser._extract_project_slug() == "my-project"
 
     def test_extract_name_minimal_html(self):
         """Test name extraction with minimal HTML containing just title."""
-        html = '<html><head><title>my-project · Manage</title></head><body></body></html>'
+        html = "<html><head><title>my-project · Manage</title></head><body></body></html>"
         parser = ProjectPageParser(html)
         assert parser._extract_project_name() == "my-project"
 
     def test_extract_members_no_timeline(self):
         """Test member extraction when no timeline exists."""
-        html = '<html><body><div>No timeline here</div></body></html>'
+        html = "<html><body><div>No timeline here</div></body></html>"
         parser = ProjectPageParser(html)
         members = parser._extract_members()
         assert members == []
 
     def test_extract_members_empty_timeline(self):
         """Test member extraction with empty timeline (no member events)."""
-        html = '''
+        html = """
         <html><body>
             <div class="phui-timeline-view">
                 <div class="phui-timeline-title">
@@ -624,14 +673,14 @@ class TestProjectPageParser:
                 </div>
             </div>
         </body></html>
-        '''
+        """
         parser = ProjectPageParser(html)
         members = parser._extract_members()
         assert members == []
 
     def test_extract_info_malformed_html(self):
         """Test extraction with minimal/malformed HTML returns defaults."""
-        html = '<html><body></body></html>'
+        html = "<html><body></body></html>"
         parser = ProjectPageParser(html)
         info = parser.extract_project_info()
 
@@ -652,29 +701,43 @@ class TestProjectMembersPageParser:
             pytest.skip("Project fixtures not found")
         return {f.stem.replace("-members", ""): f for f in groups_dir.glob("*-members.html")}
 
-
-    @pytest.mark.parametrize("group_slug,expected", [
-        ("omc-reviewers", {
-            "count": 9,
-            "members": [
-                "USER-06226534", "USER-59cbbe90", "USER-69a50f17", "USER-6af548db",
-                "USER-9cc7d5c1", "USER-9e6f8676", "USER-a90328fb", "USER-b75e60d7",
-                "USER-c6b438b0",
-            ],
-        }),
-        ("geckodriver-reviewers", {
-            "count": 3,
-            "members": ["USER-daec092a", "USER-ecc79034", "USER-fabcad3f"],
-        }),
-        ("sidebar-reviewers-rotation", {"count": 5}),
-        ("geckoview-api-reviewers", {"count": 12}),
-        ("android-reviewers", {"count": 42}),
-        ("desktop-theme-reviewers", {"count": 11}),
-        ("profiler-reviewers", {"count": 5}),
-        ("win-reviewers", {"count": 8}),
-        ("dom-storage-reviewers", {"count": 8}),
-        ("reusable-components-reviewers-rotation", {"count": 6}),
-    ])
+    @pytest.mark.parametrize(
+        "group_slug,expected",
+        [
+            (
+                "omc-reviewers",
+                {
+                    "count": 9,
+                    "members": [
+                        "USER-06226534",
+                        "USER-59cbbe90",
+                        "USER-69a50f17",
+                        "USER-6af548db",
+                        "USER-9cc7d5c1",
+                        "USER-9e6f8676",
+                        "USER-a90328fb",
+                        "USER-b75e60d7",
+                        "USER-c6b438b0",
+                    ],
+                },
+            ),
+            (
+                "geckodriver-reviewers",
+                {
+                    "count": 3,
+                    "members": ["USER-daec092a", "USER-ecc79034", "USER-fabcad3f"],
+                },
+            ),
+            ("sidebar-reviewers-rotation", {"count": 5}),
+            ("geckoview-api-reviewers", {"count": 12}),
+            ("android-reviewers", {"count": 42}),
+            ("desktop-theme-reviewers", {"count": 11}),
+            ("profiler-reviewers", {"count": 5}),
+            ("win-reviewers", {"count": 8}),
+            ("dom-storage-reviewers", {"count": 8}),
+            ("reusable-components-reviewers-rotation", {"count": 6}),
+        ],
+    )
     def test_extract_members(self, members_fixtures, group_slug, expected):
         """Test that the correct members are extracted."""
         if group_slug not in members_fixtures:
@@ -685,8 +748,7 @@ class TestProjectMembersPageParser:
         members = parser.extract_members()
 
         assert len(members) == expected["count"], (
-            f"Expected {expected['count']} members for {group_slug}, "
-            f"got {len(members)}"
+            f"Expected {expected['count']} members for {group_slug}, " f"got {len(members)}"
         )
 
         # If exact members list is provided, verify it
@@ -720,14 +782,14 @@ class TestProjectMembersPageParser:
 
     def test_extract_members_empty_page(self):
         """Test extraction with empty HTML returns empty list."""
-        html = '<html><body></body></html>'
+        html = "<html><body></body></html>"
         parser = ProjectMembersPageParser(html)
         members = parser.extract_members()
         assert members == []
 
     def test_extract_members_no_member_list(self):
         """Test extraction when page has no member list."""
-        html = '''
+        html = """
         <html><body>
             <div class="phui-header-shell">
                 <h1>Members and Watchers</h1>
@@ -736,7 +798,7 @@ class TestProjectMembersPageParser:
                 This project does not have any members.
             </div>
         </body></html>
-        '''
+        """
         parser = ProjectMembersPageParser(html)
         members = parser.extract_members()
         assert members == []
@@ -759,10 +821,7 @@ class TestParserIntegration:
 
         # Check if we have fixtures for any of these rules
         rules_dir = FIXTURES_DIR / "rules"
-        available_fixtures = {
-            f.stem.replace("rule_", ""): f
-            for f in rules_dir.glob("rule_*.html")
-        }
+        available_fixtures = {f.stem.replace("rule_", ""): f for f in rules_dir.glob("rule_*.html")}
 
         # Try to parse rules we have fixtures for
         parsed_rules = []
@@ -776,7 +835,9 @@ class TestParserIntegration:
 
         # Should have parsed at least one rule if we have fixtures
         if len(available_fixtures) > 0:
-            assert len(parsed_rules) > 0, f"Expected to parse at least one rule, but parsed {len(parsed_rules)} from {len(available_fixtures)} fixtures"
+            assert (
+                len(parsed_rules) > 0
+            ), f"Expected to parse at least one rule, but parsed {len(parsed_rules)} from {len(available_fixtures)} fixtures"
 
     def test_global_rules_fixture_coverage(self):
         """Test that global rules from listing have corresponding fixtures.
@@ -795,10 +856,7 @@ class TestParserIntegration:
 
         # Check which have fixtures
         rules_dir = FIXTURES_DIR / "rules"
-        available_fixtures = {
-            f.stem.replace("rule_", "")
-            for f in rules_dir.glob("rule_*.html")
-        }
+        available_fixtures = {f.stem.replace("rule_", "") for f in rules_dir.glob("rule_*.html")}
 
         covered = [r for r in global_rules if r in available_fixtures]
         missing = [r for r in global_rules if r not in available_fixtures]

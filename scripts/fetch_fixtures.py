@@ -50,7 +50,7 @@ class PhabricatorFetcher:
 
         # Set up authentication with session cookie
         self.session.cookies.set("phsid", session_cookie, domain=".services.mozilla.com")
-        print(f"Using session cookie authentication")
+        print("Using session cookie authentication")
 
         # Set user agent
         self.session.headers["User-Agent"] = "Herald-Scraper/0.1.0 (test fixture collection)"
@@ -287,7 +287,7 @@ def main():
 
         print("\n=== Done! ===")
         print(f"Fixtures saved to: {FIXTURES_DIR}")
-        print(f"\nSummary:")
+        print("\nSummary:")
         print(f"  - Rules fetched: {len(rule_ids)}")
         if args.projects:
             print(f"  - Projects fetched: {len(args.projects)}")

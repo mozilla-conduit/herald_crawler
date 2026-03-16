@@ -195,13 +195,6 @@ def update_test_parsers(content: str) -> Tuple[str, List[str]]:
     # 5. Update test_extract_members_from_timeline to use count-based assertions
     # Note: The old pattern has been removed as fixtures are now anonymized.
     # This step is kept for documentation purposes.
-    new_timeline_block = '''        # Verify member extraction works (names are anonymized with USER- prefix)
-        assert isinstance(members, list)
-        # Based on timeline, should have 3 current members
-        assert len(members) == 3, f"Expected 3 members from timeline, got {len(members)}"
-        # All members should be anonymized with USER- prefix
-        for member in members:
-            assert member.startswith("USER-"), f"Member should have USER- prefix, got '{member}'"'''
     # Pattern matching removed - test file already anonymized
 
     # 6. Remove test_extract_members_exact test entirely

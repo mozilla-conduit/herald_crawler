@@ -1,11 +1,11 @@
 """Tests for the resolvers module."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from herald_scraper.models import Action, Group, Reviewer, Rule, UnresolvedUser
+from herald_scraper.models import Action, Group, Reviewer, Rule
 from herald_scraper.resolvers import GroupCollector, UsernameResolver
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -171,7 +171,9 @@ class TestGroupCollector:
         android_project = FIXTURES_DIR / "groups" / "android-reviewers.html"
         android_members = FIXTURES_DIR / "groups" / "android-reviewers-members.html"
 
-        if not all(f.exists() for f in [omc_project, omc_members, android_project, android_members]):
+        if not all(
+            f.exists() for f in [omc_project, omc_members, android_project, android_members]
+        ):
             pytest.skip("Group fixtures not found")
 
         def fetch_project_side_effect(slug):
@@ -260,10 +262,7 @@ class TestGroupCollectorIntegration:
         if not groups_dir.exists():
             pytest.skip("Groups fixtures directory not found")
         # Exclude members page fixtures (*-members.html)
-        return {
-            f.stem: f for f in groups_dir.glob("*.html")
-            if not f.stem.endswith("-members")
-        }
+        return {f.stem: f for f in groups_dir.glob("*.html") if not f.stem.endswith("-members")}
 
     @pytest.fixture
     def members_fixtures(self):
@@ -271,9 +270,7 @@ class TestGroupCollectorIntegration:
         groups_dir = FIXTURES_DIR / "groups"
         if not groups_dir.exists():
             pytest.skip("Groups fixtures directory not found")
-        return {
-            f.stem.replace("-members", ""): f for f in groups_dir.glob("*-members.html")
-        }
+        return {f.stem.replace("-members", ""): f for f in groups_dir.glob("*-members.html")}
 
     # Project ID mapping for fixtures (extracted from project page fixtures)
     PROJECT_IDS = {
@@ -326,8 +323,7 @@ class TestGroupCollectorIntegration:
                     Action(
                         type="add-reviewers",
                         reviewers=[
-                            Reviewer(target=slug, blocking=True)
-                            for slug in group_fixtures.keys()
+                            Reviewer(target=slug, blocking=True) for slug in group_fixtures.keys()
                         ],
                     ),
                 ],
@@ -465,7 +461,10 @@ class TestUsernameResolver:
     def test_resolve_username_success(self, resolver, mock_people_client):
         """Test successfully resolving a username."""
         from herald_scraper.people_client import GitHubResolution
-        mock_people_client.resolve_github.return_value = GitHubResolution(username="alice-gh", user_id=12345)
+
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=12345
+        )
 
         github_user = resolver.resolve_username("alice@mozilla.com")
 
@@ -477,7 +476,10 @@ class TestUsernameResolver:
     def test_resolve_username_not_found(self, resolver, mock_people_client):
         """Test resolving a username that doesn't exist."""
         from herald_scraper.people_client import GitHubResolution
-        mock_people_client.resolve_github.return_value = GitHubResolution(username=None, user_id=None)
+
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username=None, user_id=None
+        )
 
         github_user = resolver.resolve_username("unknown@mozilla.com")
 
@@ -487,7 +489,10 @@ class TestUsernameResolver:
     def test_resolve_username_caching(self, resolver, mock_people_client):
         """Test that resolved usernames are cached."""
         from herald_scraper.people_client import GitHubResolution
-        mock_people_client.resolve_github.return_value = GitHubResolution(username="alice-gh", user_id=12345)
+
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=12345
+        )
 
         # First call
         github_user1 = resolver.resolve_username("alice@mozilla.com")
@@ -529,7 +534,9 @@ class TestUsernameResolver:
         assert len(unresolved) == 0
         assert hit_max is False  # No limit was set
 
-    def test_resolve_all_partial_failure(self, resolver, mock_people_client, sample_rules, sample_groups):
+    def test_resolve_all_partial_failure(
+        self, resolver, mock_people_client, sample_rules, sample_groups
+    ):
         """Test resolving usernames with some failures."""
         from herald_scraper.people_client import GitHubResolution
 
@@ -585,9 +592,7 @@ class TestUsernameResolver:
 
         mock_people_client.resolve_github.side_effect = mock_resolve
 
-        github_users, unresolved, hit_max = resolver.resolve_all(
-            rules, {}, max_users=2, delay=0
-        )
+        github_users, unresolved, hit_max = resolver.resolve_all(rules, {}, max_users=2, delay=0)
 
         # Should only resolve 2 users
         assert len(github_users) == 2
@@ -606,7 +611,10 @@ class TestUsernameResolver:
     def test_clear_cache(self, resolver, mock_people_client):
         """Test clearing the resolver caches."""
         from herald_scraper.people_client import GitHubResolution
-        mock_people_client.resolve_github.return_value = GitHubResolution(username="alice-gh", user_id=12345)
+
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=12345
+        )
 
         # Populate cache
         resolver.resolve_username("alice@mozilla.com")

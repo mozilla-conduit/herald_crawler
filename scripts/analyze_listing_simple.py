@@ -138,7 +138,7 @@ def analyze_listing():
     print("   - Copy the 'phsid' cookie value")
     print()
     print("2. Fetch the diverse rule examples:")
-    print(f"   export PHABRICATOR_SESSION_COOKIE='your-cookie-value'")
+    print("   export PHABRICATOR_SESSION_COOKIE='your-cookie-value'")
     print(f"   python scripts/fetch_fixtures.py --rules {' '.join(sample_rules[:6])}")
     print()
     print("3. Manually fetch a few more interesting rules by browsing:")

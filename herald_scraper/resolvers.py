@@ -127,7 +127,9 @@ class GroupCollector:
                     # Check what links are in the page
                     profile_links = re.findall(r'href="/p/([^"]+)/"', members_html)
                     has_oi_link = "phui-oi-link" in members_html
-                    logger.info(f"Page has phui-oi-link: {has_oi_link}, profile links: {len(profile_links)}")
+                    logger.info(
+                        f"Page has phui-oi-link: {has_oi_link}, profile links: {len(profile_links)}"
+                    )
 
                     members_parser = ProjectMembersPageParser(members_html)
                     members = members_parser.extract_members()
@@ -185,9 +187,7 @@ class GroupCollector:
         for slug in sorted(group_slugs):
             # Check if we've collected enough groups
             if max_groups is not None and len(groups) >= max_groups:
-                logger.info(
-                    f"Collected {len(groups)} groups, stopping (max_groups={max_groups})"
-                )
+                logger.info(f"Collected {len(groups)} groups, stopping (max_groups={max_groups})")
                 break
 
             group = self.fetch_group(slug)
@@ -266,14 +266,10 @@ class UsernameResolver:
                                 username_refs[target] = []
                             username_refs[target].append(rule.id)
 
-        logger.debug(
-            f"Extracted {len(username_refs)} unique usernames from {len(rules)} rules"
-        )
+        logger.debug(f"Extracted {len(username_refs)} unique usernames from {len(rules)} rules")
         return username_refs
 
-    def extract_usernames_from_groups(
-        self, groups: Dict[str, Group]
-    ) -> Dict[str, List[str]]:
+    def extract_usernames_from_groups(self, groups: Dict[str, Group]) -> Dict[str, List[str]]:
         """
         Extract unique usernames from group members.
 
@@ -291,9 +287,7 @@ class UsernameResolver:
                     username_refs[member] = []
                 username_refs[member].append(f"group:{slug}")
 
-        logger.debug(
-            f"Extracted {len(username_refs)} unique usernames from {len(groups)} groups"
-        )
+        logger.debug(f"Extracted {len(username_refs)} unique usernames from {len(groups)} groups")
         return username_refs
 
     def resolve_username(self, username: str) -> Optional[GitHubUser]:
@@ -327,7 +321,9 @@ class UsernameResolver:
             if resolution.username or resolution.user_id:
                 github_user = GitHubUser(username=resolution.username, user_id=resolution.user_id)
                 self._cache[lookup_name] = github_user
-                logger.debug(f"Resolved {lookup_name} -> {resolution.username} (ID: {resolution.user_id})")
+                logger.debug(
+                    f"Resolved {lookup_name} -> {resolution.username} (ID: {resolution.user_id})"
+                )
                 return github_user
             else:
                 self._unresolved[lookup_name] = "no_github_linked_or_not_found"
@@ -417,9 +413,7 @@ class UsernameResolver:
                 )
             )
 
-        logger.info(
-            f"Resolved {len(resolved_users)} users, {len(unresolved_list)} unresolved"
-        )
+        logger.info(f"Resolved {len(resolved_users)} users, {len(unresolved_list)} unresolved")
         return resolved_users, unresolved_list, hit_max_users
 
     def clear_cache(self) -> None:
@@ -586,9 +580,7 @@ class ConduitGroupCollector:
         for slug in sorted(group_slugs):
             # Check if we've collected enough groups
             if max_groups is not None and len(groups) >= max_groups:
-                logger.info(
-                    f"Collected {len(groups)} groups, stopping (max_groups={max_groups})"
-                )
+                logger.info(f"Collected {len(groups)} groups, stopping (max_groups={max_groups})")
                 break
 
             group = self.fetch_group(slug)

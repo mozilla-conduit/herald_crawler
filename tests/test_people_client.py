@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,60 +20,27 @@ class TestExtractGithubId:
 
     def test_extract_github_id_success(self):
         """Test extracting GitHub ID from valid response."""
-        response = {
-            "data": {
-                "profile": {
-                    "identities": {
-                        "githubIdV3": {"value": "961291"}
-                    }
-                }
-            }
-        }
+        response = {"data": {"profile": {"identities": {"githubIdV3": {"value": "961291"}}}}}
         assert extract_github_id(response) == "961291"
 
     def test_extract_github_id_user_not_found(self):
         """Test extracting GitHub ID when user doesn't exist."""
-        response = {
-            "data": None,
-            "errors": [{"message": "profile does not exist"}]
-        }
+        response = {"data": None, "errors": [{"message": "profile does not exist"}]}
         assert extract_github_id(response) is None
 
     def test_extract_github_id_no_github_linked(self):
         """Test extracting GitHub ID when user has no GitHub linked."""
-        response = {
-            "data": {
-                "profile": {
-                    "identities": {
-                        "githubIdV3": None
-                    }
-                }
-            }
-        }
+        response = {"data": {"profile": {"identities": {"githubIdV3": None}}}}
         assert extract_github_id(response) is None
 
     def test_extract_github_id_empty_identities(self):
         """Test extracting GitHub ID when identities is empty."""
-        response = {
-            "data": {
-                "profile": {
-                    "identities": {}
-                }
-            }
-        }
+        response = {"data": {"profile": {"identities": {}}}}
         assert extract_github_id(response) is None
 
     def test_extract_github_id_missing_value(self):
         """Test extracting GitHub ID when value key is missing."""
-        response = {
-            "data": {
-                "profile": {
-                    "identities": {
-                        "githubIdV3": {}
-                    }
-                }
-            }
-        }
+        response = {"data": {"profile": {"identities": {"githubIdV3": {}}}}}
         assert extract_github_id(response) is None
 
     def test_extract_github_id_empty_response(self):
@@ -141,7 +108,9 @@ class TestExtractFromFixtures:
                 # Real users should have a GitHub ID (anonymized with GHID- prefix)
                 github_id = extract_github_id(data)
                 if github_id is not None:
-                    assert github_id.startswith("GHID-"), f"GitHub ID should have GHID- prefix: {github_id}"
+                    assert github_id.startswith(
+                        "GHID-"
+                    ), f"GitHub ID should have GHID- prefix: {github_id}"
                     found_valid = True
 
         assert found_valid, "At least one fixture should have a valid GitHub ID"
@@ -168,10 +137,14 @@ class TestExtractFromFixtures:
             if github_username is not None:
                 # GitHub usernames should be anonymized with GHUSER- prefix
                 assert isinstance(github_username, str)
-                assert github_username.startswith("GHUSER-"), f"GitHub username should have GHUSER- prefix: {github_username}"
+                assert github_username.startswith(
+                    "GHUSER-"
+                ), f"GitHub username should have GHUSER- prefix: {github_username}"
                 found_valid = True
 
         assert found_valid, "At least one fixture should have a valid GitHub username"
+
+
 class TestPeopleDirectoryClient:
     """Tests for PeopleDirectoryClient class."""
 
@@ -193,13 +166,7 @@ class TestPeopleDirectoryClient:
         # Mock GraphQL response
         graphql_response = MagicMock()
         graphql_response.json.return_value = {
-            "data": {
-                "profile": {
-                    "identities": {
-                        "githubIdV3": {"value": "12345"}
-                    }
-                }
-            }
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "12345"}}}}
         }
 
         # Mock REST response
@@ -223,7 +190,7 @@ class TestPeopleDirectoryClient:
         graphql_response = MagicMock()
         graphql_response.json.return_value = {
             "data": None,
-            "errors": [{"message": "profile does not exist"}]
+            "errors": [{"message": "profile does not exist"}],
         }
 
         client._session.post.return_value = graphql_response
@@ -241,13 +208,7 @@ class TestPeopleDirectoryClient:
 
         graphql_response = MagicMock()
         graphql_response.json.return_value = {
-            "data": {
-                "profile": {
-                    "identities": {
-                        "githubIdV3": None
-                    }
-                }
-            }
+            "data": {"profile": {"identities": {"githubIdV3": None}}}
         }
 
         client._session.post.return_value = graphql_response

@@ -9,8 +9,10 @@ from herald_scraper.models import Rule, Condition, Action, Reviewer
 
 class HandleInfo(NamedTuple):
     """Information extracted from a phui-handle link."""
+
     name: str
     is_group: Optional[bool]  # True for /tag/, False for /p/, None if unknown
+
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +144,7 @@ class RuleDetailPageParser:
                 status=status,
                 type=rule_type,
                 conditions=conditions,
-                actions=actions
+                actions=actions,
             )
         except Exception as e:
             logger.error(f"Error parsing rule: {e}")
@@ -327,24 +329,34 @@ class RuleDetailPageParser:
             match = re.search(r"is not any of\s+(.+)$", text)
             if match:
                 statuses = [s.strip() for s in match.group(1).split(",")]
-                return Condition(type="differential-revision-status", operator="is-not-any-of", value=statuses)
+                return Condition(
+                    type="differential-revision-status", operator="is-not-any-of", value=statuses
+                )
 
         if "Revision status is any of" in text:
             match = re.search(r"is any of\s+(.+)$", text)
             if match:
                 statuses = [s.strip() for s in match.group(1).split(",")]
-                return Condition(type="differential-revision-status", operator="is-any-of", value=statuses)
+                return Condition(
+                    type="differential-revision-status", operator="is-any-of", value=statuses
+                )
 
         # Affected files conditions
         if "Affected files matches regexp" in text or "Affected files match regexp" in text:
             pattern = self._extract_regexp_pattern(text)
             if pattern:
-                return Condition(type="differential-affected-files", operator="matches-regexp", value=pattern)
+                return Condition(
+                    type="differential-affected-files", operator="matches-regexp", value=pattern
+                )
 
         if "Affected files does not match regexp" in text:
             pattern = self._extract_regexp_pattern(text)
             if pattern:
-                return Condition(type="differential-affected-files", operator="does-not-match-regexp", value=pattern)
+                return Condition(
+                    type="differential-affected-files",
+                    operator="does-not-match-regexp",
+                    value=pattern,
+                )
 
         if text.startswith("Affected files contains "):
             value = text.replace("Affected files contains ", "", 1)
@@ -352,12 +364,16 @@ class RuleDetailPageParser:
 
         if text.startswith("Affected files does not contain "):
             value = text.replace("Affected files does not contain ", "", 1)
-            return Condition(type="differential-affected-files", operator="does-not-contain", value=value)
+            return Condition(
+                type="differential-affected-files", operator="does-not-contain", value=value
+            )
 
         # Changed file content conditions
         if text.startswith("Changed file content does not contain "):
             value = text.replace("Changed file content does not contain ", "", 1)
-            return Condition(type="differential-file-content", operator="does-not-contain", value=value)
+            return Condition(
+                type="differential-file-content", operator="does-not-contain", value=value
+            )
 
         if text.startswith("Changed file content contains "):
             value = text.replace("Changed file content contains ", "", 1)
@@ -372,15 +388,21 @@ class RuleDetailPageParser:
 
         if text.startswith("Reviewers include none of"):
             reviewers = self._extract_handle_names(item)
-            return Condition(type="differential-reviewers", operator="include-none-of", value=reviewers)
+            return Condition(
+                type="differential-reviewers", operator="include-none-of", value=reviewers
+            )
 
         if text.startswith("Reviewers include any of"):
             reviewers = self._extract_handle_names(item)
-            return Condition(type="differential-reviewers", operator="include-any-of", value=reviewers)
+            return Condition(
+                type="differential-reviewers", operator="include-any-of", value=reviewers
+            )
 
         if text.startswith("Reviewers include all of"):
             reviewers = self._extract_handle_names(item)
-            return Condition(type="differential-reviewers", operator="include-all-of", value=reviewers)
+            return Condition(
+                type="differential-reviewers", operator="include-all-of", value=reviewers
+            )
 
         # Author conditions
         if text.startswith("Author is any of"):
@@ -393,28 +415,40 @@ class RuleDetailPageParser:
 
         if text.startswith("Author's projects include none of"):
             projects = self._extract_handle_names(item)
-            return Condition(type="differential-author-projects", operator="include-none-of", value=projects)
+            return Condition(
+                type="differential-author-projects", operator="include-none-of", value=projects
+            )
 
         # Project tags conditions
         if text.startswith("Project tags include any of"):
             tags = self._extract_handle_names(item)
-            return Condition(type="differential-project-tags", operator="include-any-of", value=tags)
+            return Condition(
+                type="differential-project-tags", operator="include-any-of", value=tags
+            )
 
         if text.startswith("Project tags include none of"):
             tags = self._extract_handle_names(item)
-            return Condition(type="differential-project-tags", operator="include-none-of", value=tags)
+            return Condition(
+                type="differential-project-tags", operator="include-none-of", value=tags
+            )
 
         if text.startswith("Project tags include all of"):
             tags = self._extract_handle_names(item)
-            return Condition(type="differential-project-tags", operator="include-all-of", value=tags)
+            return Condition(
+                type="differential-project-tags", operator="include-all-of", value=tags
+            )
 
         if text.startswith("Project tags added include any of"):
             tags = self._extract_handle_names(item)
-            return Condition(type="differential-project-tags-added", operator="include-any-of", value=tags)
+            return Condition(
+                type="differential-project-tags-added", operator="include-any-of", value=tags
+            )
 
         if text.startswith("Project tags added include all of"):
             tags = self._extract_handle_names(item)
-            return Condition(type="differential-project-tags-added", operator="include-all-of", value=tags)
+            return Condition(
+                type="differential-project-tags-added", operator="include-all-of", value=tags
+            )
 
         # Revision title condition
         if text.startswith("Revision title contains"):
@@ -608,7 +642,7 @@ class ProjectPageParser:
             "id": self._extract_project_slug(),
             "project_id": self._extract_project_id(),
             "display_name": self._extract_project_name(),
-            "members": self._extract_members()
+            "members": self._extract_members(),
         }
 
     def _extract_project_id(self) -> Optional[str]:
@@ -640,7 +674,8 @@ class ProjectPageParser:
 
         # Log what links we did find for debugging
         project_links = [
-            a.get("href") for a in self.soup.find_all("a", href=True)
+            a.get("href")
+            for a in self.soup.find_all("a", href=True)
             if a.get("href", "").startswith("/project/")
         ]
         if project_links:

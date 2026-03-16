@@ -558,7 +558,7 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True, force: bool = F
             if new_path.exists():
                 if force:
                     if verbose:
-                        print(f"    (overwriting existing file)")
+                        print("    (overwriting existing file)")
                     new_path.unlink()
                 else:
                     print(f"  WARNING: {new_path.name} already exists, skipping (use --force to overwrite)")
@@ -566,7 +566,7 @@ def process_fixtures(dry_run: bool = True, verbose: bool = True, force: bool = F
             old_path.rename(new_path)
 
     if verbose:
-        print(f"\nSummary:")
+        print("\nSummary:")
         print(f"  Files modified: {modified_count}")
         print(f"  Files renamed: {len(files_to_rename)}")
 

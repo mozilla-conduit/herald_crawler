@@ -50,7 +50,7 @@ class ConduitFetcher:
         self._last_request_time: Optional[float] = None
 
         self.session.headers["User-Agent"] = "Herald-Scraper/0.1.0 (test fixture collection)"
-        print(f"Using API token authentication")
+        print("Using API token authentication")
 
     def _rate_limit(self) -> None:
         """Apply rate limiting between requests."""
@@ -305,7 +305,7 @@ def main() -> None:
             print(f"Found {len(project_slugs)} groups: {', '.join(project_slugs[:10])}...")
             project_slugs = project_slugs[: args.max_projects]
         elif args.from_fixtures:
-            print(f"\n=== Loading groups from existing fixtures ===")
+            print("\n=== Loading groups from existing fixtures ===")
             project_slugs = extract_slugs_from_fixtures()
             print(f"Found {len(project_slugs)} groups: {', '.join(project_slugs)}")
             project_slugs = project_slugs[: args.max_projects]
