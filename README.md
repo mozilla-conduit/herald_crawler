@@ -31,10 +31,15 @@ pip install -e .
 
 ```bash
 herald-scraper \
-  --instance https://phabricator.services.mozilla.com \
+  --url https://phabricator.services.mozilla.com \
   --output rules.json \
-  [--token API_TOKEN]
+  --conduit-token CONDUIT_API_TOKEN \
+  [--max-pages P] \
+  [--max-groups G] \
+  [--max-rules R] \
 ```
+
+Get `CONDUIT_API_TOKEN` from https://phabricator.services.mozilla.com/settings/user/YOUR_USERNAME/page/apitokens/
 
 ## Development
 
