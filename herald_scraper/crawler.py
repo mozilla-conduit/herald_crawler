@@ -89,7 +89,7 @@ def load_existing_output(file_path: Union[str, Path]) -> Optional[HeraldRulesOut
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        output = HeraldRulesOutput.model_validate(data)
+        output: HeraldRulesOutput = HeraldRulesOutput.model_validate(data)
         logger.info(
             f"Loaded existing output: {len(output.rules)} rules, "
             f"{len(output.groups)} groups, {len(output.github_users)} GitHub users"
@@ -242,21 +242,24 @@ class HeraldCrawler:
             if conduit_client:
                 # Use Conduit API (preferred)
                 logger.info("Collecting group membership via Conduit API")
-                group_collector = ConduitGroupCollector(conduit_client)
+                conduit_collector = ConduitGroupCollector(conduit_client)
 
                 # Pre-populate cache with existing groups
                 for slug, group in existing_groups.items():
-                    group_collector._group_cache[slug] = group
+                    conduit_collector._group_cache[slug] = group
+
+                all_groups = conduit_collector.collect_all_groups(rules, max_groups=max_groups)
             else:
                 # Fall back to HTML scraping
                 logger.info("Collecting group membership via HTML scraping")
-                group_collector = GroupCollector(self.client)
+                html_collector = GroupCollector(self.client)
 
                 # Pre-populate cache with existing groups
                 for slug, group in existing_groups.items():
-                    group_collector._cache[slug] = group
+                    html_collector._cache[slug] = group
 
-            all_groups = group_collector.collect_all_groups(rules, max_groups=max_groups)
+                all_groups = html_collector.collect_all_groups(rules, max_groups=max_groups)
+
             groups.update(all_groups)
 
             # Check if any groups have empty members (incomplete)

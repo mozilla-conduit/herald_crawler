@@ -90,7 +90,7 @@ class ConduitFetcher:
         response = self.session.post(url, data=data)
         response.raise_for_status()
 
-        result = response.json()
+        result: Dict[str, Any] = response.json()
 
         # Check for API errors
         if result.get("error_code"):
@@ -192,7 +192,8 @@ def save_json(data: Dict[str, Any], filepath: Path) -> None:
 def load_rules_output(filepath: Path) -> Dict[str, Any]:
     """Load existing herald_rules.json output."""
     with open(filepath) as f:
-        return json.load(f)
+        data: Dict[str, Any] = json.load(f)
+        return data
 
 
 def extract_group_slugs_from_rules(rules_data: Dict[str, Any]) -> List[str]:

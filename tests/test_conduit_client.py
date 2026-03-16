@@ -25,28 +25,32 @@ def conduit_fixtures_path(fixtures_path: Path) -> Path:
 def project_search_response(conduit_fixtures_path: Path) -> Dict[str, Any]:
     """Load project.search response fixture."""
     with open(conduit_fixtures_path / "project_search_response.json") as f:
-        return json.load(f)
+        data: Dict[str, Any] = json.load(f)
+        return data
 
 
 @pytest.fixture
 def user_search_response(conduit_fixtures_path: Path) -> Dict[str, Any]:
     """Load user.search response fixture."""
     with open(conduit_fixtures_path / "user_search_response.json") as f:
-        return json.load(f)
+        data: Dict[str, Any] = json.load(f)
+        return data
 
 
 @pytest.fixture
 def error_response(conduit_fixtures_path: Path) -> Dict[str, Any]:
     """Load error response fixture."""
     with open(conduit_fixtures_path / "error_response.json") as f:
-        return json.load(f)
+        data: Dict[str, Any] = json.load(f)
+        return data
 
 
 @pytest.fixture
 def project_not_found_response(conduit_fixtures_path: Path) -> Dict[str, Any]:
     """Load project not found response fixture."""
     with open(conduit_fixtures_path / "project_not_found_response.json") as f:
-        return json.load(f)
+        data: Dict[str, Any] = json.load(f)
+        return data
 
 
 @pytest.fixture

@@ -114,7 +114,7 @@ class HeraldClient:
 
         # Check for login page returned with 200 OK (Phabricator sometimes
         # serves login page directly instead of redirecting)
-        content = response.text
+        content: str = response.text
         if "<title>Login</title>" in content:
             raise AuthenticationError(
                 f"Authentication required. Login page returned for: {full_url}"

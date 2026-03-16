@@ -37,7 +37,8 @@ REPO_ROOT = Path(__file__).parent.parent
 def load_mapping(mapping_file: str) -> Dict[str, Dict[str, str]]:
     """Load the anonymization mapping from file."""
     with open(mapping_file) as f:
-        return json.load(f)
+        data: Dict[str, Dict[str, str]] = json.load(f)
+        return data
 
 
 def generate_expressions(mapping: Dict[str, Dict[str, str]]) -> List[Tuple[str, str]]:

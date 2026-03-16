@@ -69,7 +69,8 @@ class PeopleDirectoryClient:
         logger.debug(f"Querying GitHub ID for: {username}")
         response = self._session.post(PMO_GRAPHQL_URL, headers=headers, json=payload)
         response.raise_for_status()
-        return response.json()
+        result: dict = response.json()
+        return result
 
     def get_github_username_by_id(self, github_id: str) -> dict:
         """Get GitHub username from GitHub ID via REST API.
@@ -85,7 +86,8 @@ class PeopleDirectoryClient:
         logger.debug(f"Querying GitHub username for ID: {github_id}")
         response = self._session.get(url)
         response.raise_for_status()
-        return response.json()
+        result: dict = response.json()
+        return result
 
     def resolve_github(self, username: str) -> GitHubResolution:
         """Resolve Phabricator username to GitHub username and user ID.
@@ -174,7 +176,8 @@ def extract_github_id(response: dict) -> Optional[str]:
         if not github_id_obj:
             return None
 
-        return github_id_obj.get("value")
+        value: Optional[str] = github_id_obj.get("value")
+        return value
     except (KeyError, TypeError, AttributeError):
         return None
 
@@ -194,4 +197,5 @@ def extract_github_username(response: dict) -> Optional[str]:
         >>> extract_github_username({})
         None
     """
-    return response.get("username")
+    username: Optional[str] = response.get("username")
+    return username

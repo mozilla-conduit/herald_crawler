@@ -93,7 +93,8 @@ def query_github_id(session: requests.Session, username: str, verbose: bool = Fa
         print()
 
     response.raise_for_status()
-    return response.json()
+    result: dict = response.json()
+    return result
 
 
 def query_github_username(session: requests.Session, github_id: str, verbose: bool = False) -> dict:
@@ -121,7 +122,8 @@ def query_github_username(session: requests.Session, github_id: str, verbose: bo
         print()
 
     response.raise_for_status()
-    return response.json()
+    result: dict = response.json()
+    return result
 
 
 def main():

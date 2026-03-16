@@ -63,14 +63,16 @@ class PeopleDirectoryClient:
         }
         response = self.session.post(PMO_GRAPHQL_URL, headers=headers, json=payload)
         response.raise_for_status()
-        return response.json()
+        result: dict = response.json()
+        return result
 
     def get_github_username(self, github_id: str) -> dict:
         """Step 2: Get GitHub username from GitHub ID via REST."""
         url = PMO_GITHUB_USERNAME_URL.format(github_id=github_id)
         response = self.session.get(url)
         response.raise_for_status()
-        return response.json()
+        result: dict = response.json()
+        return result
 
 
 def save_fixture(data: dict, filepath: Path):

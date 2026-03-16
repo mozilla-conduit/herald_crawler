@@ -35,7 +35,7 @@ class ListingPageParser:
         rule_ids = set()
 
         for link in self.soup.find_all("a", href=True):
-            href = link["href"]
+            href: str = link["href"]  # type: ignore[assignment]
             if href.startswith("/H") and len(href) > 2:
                 rule_id = href[1:]
                 if rule_id[0] == "H" and rule_id[1:].isdigit():
@@ -87,7 +87,7 @@ class ListingPageParser:
 
         # Look for a link with "Next" text or after= parameter
         for link in pager.find_all("a", href=True):
-            href = link.get("href", "")
+            href: str = link.get("href", "")  # type: ignore[assignment]
             if "after=" in href:
                 return True
 
@@ -106,7 +106,7 @@ class ListingPageParser:
 
         # Look for a link with after= parameter (Phabricator's cursor pagination)
         for link in pager.find_all("a", href=True):
-            href = link.get("href", "")
+            href: str = link.get("href", "")  # type: ignore[assignment]
             if "after=" in href:
                 return href
 
@@ -167,7 +167,7 @@ class RuleDetailPageParser:
                 # Find the corresponding dd value
                 dd = dt.find_next_sibling("dd", class_="phui-property-list-value")
                 if dd:
-                    value = dd.get_text(strip=True)
+                    value: str = dd.get_text(strip=True)
                     return value == "Global"
 
         # If we can't find the Rule Type property, log a warning and return False
@@ -182,14 +182,14 @@ class RuleDetailPageParser:
         if last_crumb:
             crumb_name = last_crumb.find("span", class_="phui-crumb-name")
             if crumb_name:
-                text = crumb_name.get_text(strip=True)
+                text: str = crumb_name.get_text(strip=True)
                 # Should be in format "H###"
                 if text.startswith("H") and text[1:].isdigit():
                     return text
 
         # Fallback: look for links to the rule itself
         for link in self.soup.find_all("a", href=True):
-            href = link["href"]
+            href: str = link.get("href", "")  # type: ignore[assignment]
             if href.startswith("/H") and len(href) > 2:
                 rule_id = href[1:]
                 if rule_id[0] == "H" and rule_id[1:].isdigit():
@@ -202,7 +202,7 @@ class RuleDetailPageParser:
         # Rule name is typically in the page title or a header
         title = self.soup.find("title")
         if title:
-            title_text = title.get_text(strip=True)
+            title_text: str = title.get_text(strip=True)
             # Remove "☿ " prefix if present
             if title_text.startswith("☿ "):
                 return title_text[2:]
@@ -223,7 +223,8 @@ class RuleDetailPageParser:
                     # Find the person link in this div
                     person_link = title_div.find("a", class_="phui-link-person")
                     if person_link:
-                        return person_link.get_text(strip=True)
+                        author: str = person_link.get_text(strip=True)
+                        return author
 
         # Fallback: look for any user link that created the object
         for link in self.soup.find_all("a", class_="phui-link-person"):
@@ -232,7 +233,8 @@ class RuleDetailPageParser:
             if parent:
                 parent_text = parent.get_text(strip=True)
             if "created" in parent_text:
-                return link.get_text(strip=True)
+                name: str = link.get_text(strip=True)
+                return name
 
         return "unknown"
 
@@ -296,11 +298,11 @@ class RuleDetailPageParser:
         # Iterate through siblings until we hit the actions header
         for sibling in conditions_header.find_next_siblings():
             # Stop if we reach the actions section
-            if sibling.name == "p" and "herald-list-description" in sibling.get("class", []):
+            if sibling.name == "p" and "herald-list-description" in (sibling.get("class") or []):
                 break
 
             # Process herald-list-item divs
-            if sibling.name == "div" and "herald-list-item" in sibling.get("class", []):
+            if sibling.name == "div" and "herald-list-item" in (sibling.get("class") or []):
                 condition = self._parse_condition_item(sibling)
                 if condition:
                     conditions.append(condition)
@@ -458,8 +460,8 @@ class RuleDetailPageParser:
 
         # Is newly created condition
         if text.startswith("Is newly created is"):
-            value = "true" in text.lower()
-            return Condition(type="differential-is-new", operator="is", value=value)
+            is_new = "true" in text.lower()
+            return Condition(type="differential-is-new", operator="is", value=is_new)
 
         # Another Herald rule matches
         if text.startswith("Another Herald rule matches:"):
@@ -493,7 +495,7 @@ class RuleDetailPageParser:
                 name = link_text
 
             # Determine if it's a group or user from the href
-            href = link.get("href", "")
+            href: str = link.get("href", "")  # type: ignore[assignment]
             if href.startswith("/tag/"):
                 is_group = True
             elif href.startswith("/p/"):
@@ -540,11 +542,11 @@ class RuleDetailPageParser:
         # Iterate through siblings after the actions header
         for sibling in actions_header.find_next_siblings():
             # Stop if we reach another section (unlikely, but defensive)
-            if sibling.name == "p" and "herald-list-description" in sibling.get("class", []):
+            if sibling.name == "p" and "herald-list-description" in (sibling.get("class") or []):
                 break
 
             # Process herald-list-item divs
-            if sibling.name == "div" and "herald-list-item" in sibling.get("class", []):
+            if sibling.name == "div" and "herald-list-item" in (sibling.get("class") or []):
                 action = self._parse_action_item(sibling)
                 if action:
                     actions.append(action)
@@ -665,7 +667,7 @@ class ProjectPageParser:
         # Find all links that might contain project ID
         for pattern in patterns:
             for link in self.soup.find_all("a", href=True):
-                href = link.get("href", "")
+                href: str = link.get("href", "")  # type: ignore[assignment]
                 match = re.search(pattern, href)
                 if match:
                     project_id = match.group(1)
@@ -673,10 +675,10 @@ class ProjectPageParser:
                     return project_id
 
         # Log what links we did find for debugging
-        project_links = [
+        project_links: list = [
             a.get("href")
             for a in self.soup.find_all("a", href=True)
-            if a.get("href", "").startswith("/project/")
+            if str(a.get("href", "")).startswith("/project/")
         ]
         if project_links:
             logger.debug(f"Found project links but no ID: {project_links[:5]}")
@@ -700,7 +702,7 @@ class ProjectPageParser:
                 if dd:
                     tag_link = dd.find("a", href=True)
                     if tag_link:
-                        href = tag_link.get("href", "")
+                        href: str = tag_link.get("href", "")  # type: ignore[assignment]
                         # Extract slug from /tag/{slug}/ pattern
                         if href.startswith("/tag/") and href.endswith("/"):
                             slug = href[5:-1]
@@ -709,9 +711,9 @@ class ProjectPageParser:
 
         # Try to find tag link anywhere on the page
         for link in self.soup.find_all("a", href=True):
-            href = link.get("href", "")
-            if href.startswith("/tag/") and href.endswith("/"):
-                slug = href[5:-1]
+            link_href: str = link.get("href", "")  # type: ignore[assignment]
+            if link_href.startswith("/tag/") and link_href.endswith("/"):
+                slug = link_href[5:-1]
                 # Skip generic tags that aren't project names
                 if slug and not slug.startswith("_"):
                     logger.debug(f"Found slug '{slug}' from tag link")
@@ -721,7 +723,7 @@ class ProjectPageParser:
         logger.debug("No tag link found, falling back to title")
         title = self.soup.find("title")
         if title:
-            title_text = title.get_text(strip=True)
+            title_text: str = title.get_text(strip=True)
             if " · " in title_text:
                 slug = title_text.split(" · ")[0]
                 logger.debug(f"Extracted slug '{slug}' from title")
@@ -734,7 +736,7 @@ class ProjectPageParser:
         """Extract project display name from page title."""
         title = self.soup.find("title")
         if title:
-            title_text = title.get_text(strip=True)
+            title_text: str = title.get_text(strip=True)
             # Title format: "project-name · Manage" or similar
             if " · " in title_text:
                 return title_text.split(" · ")[0]
@@ -744,7 +746,8 @@ class ProjectPageParser:
         logger.debug("No title found, falling back to breadcrumbs")
         breadcrumbs = self.soup.find_all("span", class_="phui-crumb-name")
         if len(breadcrumbs) >= 2:
-            return breadcrumbs[-2].get_text(strip=True).strip()
+            crumb_text: str = breadcrumbs[-2].get_text(strip=True)
+            return crumb_text.strip()
 
         logger.debug("Could not extract project name, returning default")
         return "Unknown Project"
@@ -787,7 +790,8 @@ class ProjectPageParser:
         """
         person_links = element.find_all("a", class_="phui-link-person")
         if len(person_links) >= 2:
-            return person_links[1].get_text(strip=True)
+            member: str = person_links[1].get_text(strip=True)
+            return member
         return None
 
 
@@ -815,10 +819,10 @@ class ProjectMembersPageParser:
         # Look for member cards with profile links: <a href="/p/{username}/" class="phui-oi-link">
         # The members page shows a list of user cards in a phui-oi-list-view
         member_links = self.soup.find_all(
-            "a", class_="phui-oi-link", href=lambda h: h and h.startswith("/p/")
+            "a", class_="phui-oi-link", href=re.compile(r"^/p/")
         )
         for link in member_links:
-            href = link.get("href", "")
+            href: str = link.get("href", "")  # type: ignore[assignment]
             # Extract username from /p/{username}/
             if href.startswith("/p/") and href.endswith("/"):
                 username = href[3:-1]  # Remove "/p/" prefix and "/" suffix
@@ -838,8 +842,10 @@ class ProjectMembersPageParser:
         if not pager:
             return False
         # Check for "Next" link
-        next_link = pager.find("a", string=lambda s: s and "Next" in s)
-        return next_link is not None
+        for link in pager.find_all("a"):
+            if link.string and "Next" in link.string:
+                return True
+        return False
 
     def get_next_page_url(self) -> Optional[str]:
         """Get URL for the next page of members if pagination exists.
@@ -850,7 +856,8 @@ class ProjectMembersPageParser:
         pager = self.soup.find("div", class_="phui-pager-view")
         if not pager:
             return None
-        next_link = pager.find("a", string=lambda s: s and "Next" in s)
-        if next_link:
-            return next_link.get("href")
+        for link in pager.find_all("a"):
+            if link.string and "Next" in link.string:
+                href: str = link.get("href", "")  # type: ignore[assignment]
+                return href
         return None

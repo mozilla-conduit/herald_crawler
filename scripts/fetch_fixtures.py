@@ -61,11 +61,13 @@ class PhabricatorFetcher:
         response = self.session.get(url)
         response.raise_for_status()
 
+        content: str = response.text
+
         # Check if we got a login page instead
-        if "Log In" in response.text and "/auth/login/" in response.text:
+        if "Log In" in content and "/auth/login/" in content:
             raise Exception("Authentication failed - got login page")
 
-        return response.text
+        return content
 
     def fetch_listing(self) -> str:
         """Fetch the Herald rules listing page."""

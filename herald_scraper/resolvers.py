@@ -544,7 +544,7 @@ class ConduitGroupCollector:
 
             # Resolve PHIDs to usernames
             phid_to_username = self._resolve_phids_to_usernames(member_phids)
-            members = [phid_to_username.get(p) for p in member_phids if p in phid_to_username]
+            members = [phid_to_username[p] for p in member_phids if p in phid_to_username]
 
             group = Group(
                 id=slug,

@@ -133,7 +133,7 @@ class ConduitClient:
         response = self._session.post(url, data=data, timeout=self.timeout)
         response.raise_for_status()
 
-        result = response.json()
+        result: Dict[str, Any] = response.json()
 
         # Check for API errors
         if result.get("error_code"):
@@ -142,7 +142,8 @@ class ConduitClient:
                 error_code=result.get("error_code"),
             )
 
-        return result.get("result", {})
+        api_result: Dict[str, Any] = result.get("result", {})
+        return api_result
 
     def project_search(
         self,

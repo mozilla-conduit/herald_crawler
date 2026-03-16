@@ -464,8 +464,10 @@ class TestLoadExistingOutput:
         assert len(result.rules) == 1
         assert result.rules[0].id == "H420"
         assert "test-group" in result.groups
-        assert result.github_users.get("user1").username == "user1-gh"
-        assert result.github_users.get("user1").user_id == 12345
+        user1 = result.github_users.get("user1")
+        assert user1 is not None
+        assert user1.username == "user1-gh"
+        assert user1.user_id == 12345
 
     def test_load_invalid_json(self, tmp_path: Path) -> None:
         """Test loading an invalid JSON file."""
@@ -652,8 +654,10 @@ class TestResumeFromExistingOutput:
         )
 
         # Existing GitHub users should be preserved
-        assert output.github_users.get("existinguser").username == "existing-gh"
-        assert output.github_users.get("existinguser").user_id == 99999
+        existing_user = output.github_users.get("existinguser")
+        assert existing_user is not None
+        assert existing_user.username == "existing-gh"
+        assert existing_user.user_id == 99999
 
     def test_resume_skips_groups_with_members(
         self,

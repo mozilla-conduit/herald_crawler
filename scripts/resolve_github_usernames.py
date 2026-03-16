@@ -67,14 +67,16 @@ class GitHubUsernameResolver:
         """Load cache from file."""
         if self.cache_file.exists():
             with open(self.cache_file) as f:
-                return json.load(f)
+                data: dict = json.load(f)
+                return data
         return {"usernames": {}, "metadata": {"created": datetime.now().isoformat()}}
 
     def _load_unresolved(self) -> dict:
         """Load unresolved users from file."""
         if self.unresolved_file.exists():
             with open(self.unresolved_file) as f:
-                return json.load(f)
+                data: dict = json.load(f)
+                return data
         return {"users": {}, "metadata": {"created": datetime.now().isoformat()}}
 
     def _save_cache(self) -> None:
@@ -100,7 +102,8 @@ class GitHubUsernameResolver:
         """
         entry = self._cache["usernames"].get(username)
         if entry:
-            return entry.get("github_username")
+            github_username: Optional[str] = entry.get("github_username")
+            return github_username
         return None
 
     def is_unresolved(self, username: str) -> bool:
@@ -181,7 +184,7 @@ class GitHubUsernameResolver:
         Returns:
             Dict mapping Phabricator usernames to GitHub usernames (or None)
         """
-        results = {}
+        results: dict[str, Optional[str]] = {}
         stats = {"cached": 0, "resolved": 0, "unresolved": 0, "skipped": 0, "errors": 0}
 
         for i, username in enumerate(usernames, 1):

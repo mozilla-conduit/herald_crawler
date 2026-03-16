@@ -21,7 +21,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 FIXTURES_DIR = Path(__file__).parent.parent / "tests" / "fixtures"
 
@@ -131,7 +131,7 @@ def extract_potential_usernames_from_json(content: str) -> Set[str]:
     return potential
 
 
-def check_fixture_filenames(mapping: Dict[str, Dict[str, str]] = None) -> List[str]:
+def check_fixture_filenames(mapping: Optional[Dict[str, Dict[str, str]]] = None) -> List[str]:
     """Check if any fixture filenames contain real usernames."""
     issues = []
 
@@ -168,7 +168,7 @@ def check_fixture_filenames(mapping: Dict[str, Dict[str, str]] = None) -> List[s
 
 
 def scan_fixtures(
-    mapping: Dict[str, Dict[str, str]] = None,
+    mapping: Optional[Dict[str, Dict[str, str]]] = None,
     verbose: bool = False
 ) -> Tuple[List[str], List[str]]:
     """Scan all fixtures for potential PII.
