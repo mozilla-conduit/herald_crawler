@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 PMO_GRAPHQL_URL = "https://people.mozilla.org/api/v4/graphql"
 PMO_GITHUB_USERNAME_URL = "https://people.mozilla.org/whoami/github/username/{github_id}"
+PMO_SEARCH_SIMPLE_URL = "https://people.mozilla.org/api/v4/search/simple/"
 
 GITHUB_ID_QUERY = """
 query GetGitHubId($username: String) {
@@ -89,6 +90,28 @@ class PeopleDirectoryClient:
         result: dict = response.json()
         return result
 
+    def search_simple(self, query: str) -> dict:
+        """Perform a broad profile search via the simple search endpoint.
+
+        The GraphQL ``profile(username:)`` lookup is case-sensitive, so users
+        whose PMO primary_username differs in case from their Phabricator
+        username cannot be resolved directly. This endpoint performs a fuzzy,
+        case-insensitive match that we can use to recover the correct case.
+
+        Args:
+            query: Search query (typically a Phabricator username)
+
+        Returns:
+            Raw JSON response with shape ``{"total", "next", "dinos": [...]}``
+        """
+        logger.debug(f"Searching profiles for: {query}")
+        response = self._session.get(
+            PMO_SEARCH_SIMPLE_URL, params={"q": query, "w": "all"}
+        )
+        response.raise_for_status()
+        result: dict = response.json()
+        return result
+
     def resolve_github(self, username: str) -> GitHubResolution:
         """Resolve Phabricator username to GitHub username and user ID.
 
@@ -103,6 +126,19 @@ class PeopleDirectoryClient:
         # Step 1: Get GitHub ID
         graphql_response = self.get_github_id(username)
         github_id = extract_github_id(graphql_response)
+
+        # The GraphQL profile lookup is case-sensitive. If the user wasn't
+        # found, fall back to the simple search endpoint to recover the
+        # correct case of their PMO primary_username, then retry.
+        if not github_id and _profile_not_found(graphql_response):
+            time.sleep(self.delay)
+            search_response = self.search_simple(username)
+            resolved = find_username_case_insensitive(search_response, username)
+            if resolved and resolved != username:
+                logger.info(f"Case-insensitive match: {username} -> {resolved}")
+                time.sleep(self.delay)
+                graphql_response = self.get_github_id(resolved)
+                github_id = extract_github_id(graphql_response)
 
         if not github_id:
             logger.debug(f"No GitHub ID found for: {username}")
@@ -199,3 +235,47 @@ def extract_github_username(response: dict) -> Optional[str]:
     """
     username: Optional[str] = response.get("username")
     return username
+
+
+def _profile_not_found(graphql_response: dict) -> bool:
+    """True when the GraphQL response indicates no profile was found.
+
+    Distinguishes "user does not exist" (where a case-insensitive retry makes
+    sense) from "user exists but has no GitHub identity linked" (where a
+    retry would be wasted).
+    """
+    data = graphql_response.get("data")
+    if data is None:
+        return True
+    return data.get("profile") is None
+
+
+def find_username_case_insensitive(response: dict, query: str) -> Optional[str]:
+    """Find the primary_username from a search response that matches ``query``
+    case-insensitively.
+
+    The simple search endpoint performs fuzzy matching across many fields, so
+    we filter the results to a dino whose ``username`` equals ``query``
+    ignoring case.
+
+    Args:
+        response: JSON response from the ``/api/v4/search/simple/`` endpoint
+        query: Username being looked up (case-sensitive)
+
+    Returns:
+        The matching primary_username in its canonical case, or None.
+
+    Examples:
+        >>> find_username_case_insensitive(
+        ...     {"dinos": [{"username": "Octocat"}]}, "octocat"
+        ... )
+        'Octocat'
+        >>> find_username_case_insensitive({"dinos": []}, "octocat")
+    """
+    query_lower = query.lower()
+    dinos = response.get("dinos") or []
+    for dino in dinos:
+        candidate = dino.get("username")
+        if candidate and candidate.lower() == query_lower:
+            return str(candidate)
+    return None

@@ -10,6 +10,7 @@ from herald_scraper.people_client import (
     PeopleDirectoryClient,
     extract_github_id,
     extract_github_username,
+    find_username_case_insensitive,
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "people"
@@ -184,7 +185,7 @@ class TestPeopleDirectoryClient:
 
     def test_resolve_github_username_user_not_found(self):
         """Test resolution when user doesn't exist."""
-        client = PeopleDirectoryClient(cookie="test-cookie")
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
         client._session = MagicMock()
 
         graphql_response = MagicMock()
@@ -192,14 +193,19 @@ class TestPeopleDirectoryClient:
             "data": None,
             "errors": [{"message": "profile does not exist"}],
         }
+        search_response = MagicMock()
+        search_response.json.return_value = {"total": 0, "next": "", "dinos": []}
 
         client._session.post.return_value = graphql_response
+        client._session.get.return_value = search_response
 
         result = client.resolve_github_username("nonexistent")
 
         assert result is None
-        client._session.post.assert_called_once()
-        client._session.get.assert_not_called()  # Should not call REST API
+        # After the initial GraphQL miss, we fall back to search/simple to
+        # look for a case-insensitive match; when none is found we stop.
+        assert client._session.post.call_count == 1
+        client._session.get.assert_called_once()
 
     def test_resolve_github_username_no_github_linked(self):
         """Test resolution when user has no GitHub linked."""
@@ -218,3 +224,185 @@ class TestPeopleDirectoryClient:
         assert result is None
         client._session.post.assert_called_once()
         client._session.get.assert_not_called()
+
+    def test_resolve_github_username_case_insensitive_fallback(self):
+        """When PMO case differs from Phabricator, fall back to search/simple."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        # First GraphQL call: lowercase lookup misses.
+        miss_response = MagicMock()
+        miss_response.json.return_value = {
+            "data": None,
+            "errors": [{"message": "profile does not exist"}],
+        }
+        # Retry with canonical case succeeds.
+        hit_response = MagicMock()
+        hit_response.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "12345"}}}}
+        }
+        client._session.post.side_effect = [miss_response, hit_response]
+
+        # Search surfaces the same user with different casing, plus noise.
+        search_response = MagicMock()
+        search_response.json.return_value = {
+            "total": 2,
+            "next": "",
+            "dinos": [
+                {"username": "SomeoneElse"},
+                {"username": "PhabUser"},
+            ],
+        }
+        rest_response = MagicMock()
+        rest_response.json.return_value = {"username": "ghuser"}
+        client._session.get.side_effect = [search_response, rest_response]
+
+        result = client.resolve_github_username("phabuser")
+
+        assert result == "ghuser"
+        assert client._session.post.call_count == 2
+        # The retry must use the canonical casing returned by search.
+        retry_payload = client._session.post.call_args_list[1].kwargs["json"]
+        assert retry_payload["variables"]["username"] == "PhabUser"
+
+    def test_resolve_github_username_search_no_match(self):
+        """Case-insensitive fallback returns None when search surfaces no match."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        miss_response = MagicMock()
+        miss_response.json.return_value = {"data": None, "errors": []}
+        client._session.post.return_value = miss_response
+
+        # Search returns fuzzy matches, none of which match the query by case.
+        search_response = MagicMock()
+        search_response.json.return_value = {
+            "dinos": [{"username": "unrelated_user"}],
+        }
+        client._session.get.return_value = search_response
+
+        result = client.resolve_github_username("missing")
+
+        assert result is None
+        # No retry, no GitHub username lookup.
+        assert client._session.post.call_count == 1
+        assert client._session.get.call_count == 1
+
+
+class TestFindUsernameCaseInsensitive:
+    """Tests for find_username_case_insensitive helper."""
+
+    def test_finds_canonical_case(self):
+        response = {"dinos": [{"username": "MixedCase"}]}
+        assert find_username_case_insensitive(response, "mixedcase") == "MixedCase"
+
+    def test_prefers_exact_match_among_fuzzy_hits(self):
+        response = {
+            "dinos": [
+                {"username": "other"},
+                {"username": "TheUser"},
+                {"username": "TheUserExtra"},
+            ]
+        }
+        assert find_username_case_insensitive(response, "theuser") == "TheUser"
+
+    def test_returns_none_when_no_match(self):
+        response = {"dinos": [{"username": "someone"}]}
+        assert find_username_case_insensitive(response, "other") is None
+
+    def test_handles_empty_response(self):
+        assert find_username_case_insensitive({}, "anything") is None
+        assert find_username_case_insensitive({"dinos": []}, "anything") is None
+
+    def test_skips_dinos_without_username(self):
+        response = {"dinos": [{}, {"username": None}, {"username": "Match"}]}
+        assert find_username_case_insensitive(response, "match") == "Match"
+
+
+class TestSearchSimpleFixture:
+    """Tests that verify parsing of the /api/v4/search/simple/ response."""
+
+    SEARCH_FIXTURE = FIXTURES_DIR / "search_simple_USER-c0ffee12.json"
+
+    @pytest.fixture
+    def search_response(self):
+        with open(self.SEARCH_FIXTURE) as f:
+            return json.load(f)
+
+    def test_fixture_has_expected_shape(self, search_response):
+        """The endpoint returns {total, next, dinos: [...]}."""
+        assert set(search_response.keys()) >= {"total", "next", "dinos"}
+        assert isinstance(search_response["dinos"], list)
+        assert search_response["dinos"], "fixture should contain at least one dino"
+
+    def test_fixture_contains_no_real_username(self, search_response):
+        """Guard against regressions that would re-introduce PII."""
+        for dino in search_response["dinos"]:
+            username = dino.get("username", "")
+            assert username.startswith("USER-"), (
+                f"fixture leaked a non-anonymized username: {username}"
+            )
+
+    def test_find_username_case_insensitive_on_fixture(self, search_response):
+        """find_username_case_insensitive picks the canonical casing out of a real response."""
+        canonical = search_response["dinos"][0]["username"]
+        assert find_username_case_insensitive(search_response, canonical.lower()) == canonical
+        assert find_username_case_insensitive(search_response, canonical.upper()) == canonical
+        assert find_username_case_insensitive(search_response, canonical) == canonical
+
+    def test_find_username_case_insensitive_rejects_non_match(self, search_response):
+        """A query that doesn't match any dino returns None even on a populated response."""
+        assert find_username_case_insensitive(search_response, "not-in-fixture") is None
+
+    def test_search_simple_calls_endpoint_and_returns_parsed_json(self, search_response):
+        """Client hits the simple search URL with the right params and returns parsed JSON."""
+        from herald_scraper.people_client import PMO_SEARCH_SIMPLE_URL
+
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+        mocked = MagicMock()
+        mocked.json.return_value = search_response
+        client._session.get.return_value = mocked
+
+        result = client.search_simple("c0ffee12")
+
+        assert result == search_response
+        client._session.get.assert_called_once_with(
+            PMO_SEARCH_SIMPLE_URL, params={"q": "c0ffee12", "w": "all"}
+        )
+        mocked.raise_for_status.assert_called_once()
+
+    def test_resolve_github_uses_fixture_for_case_recovery(self, search_response):
+        """Full flow: initial GraphQL miss -> simple search -> retry GraphQL with canonical case."""
+        canonical = search_response["dinos"][0]["username"]
+        query = canonical.lower()
+        assert query != canonical, (
+            "fixture username must be mixed-case to exercise the fallback"
+        )
+
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        miss = MagicMock()
+        miss.json.return_value = {
+            "data": None,
+            "errors": [{"message": "profile does not exist"}],
+        }
+        hit = MagicMock()
+        hit.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "42"}}}}
+        }
+        client._session.post.side_effect = [miss, hit]
+
+        search = MagicMock()
+        search.json.return_value = search_response
+        rest = MagicMock()
+        rest.json.return_value = {"username": "gh-canonical"}
+        client._session.get.side_effect = [search, rest]
+
+        result = client.resolve_github(query)
+
+        assert result.username == "gh-canonical"
+        assert result.user_id == 42
+        retry_payload = client._session.post.call_args_list[1].kwargs["json"]
+        assert retry_payload["variables"]["username"] == canonical

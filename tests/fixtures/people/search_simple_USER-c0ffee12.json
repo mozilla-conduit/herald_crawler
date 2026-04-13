@@ -1,0 +1,18 @@
+{
+  "total": 1,
+  "next": "",
+  "dinos": [
+    {
+      "lastName": "REALNAME-lastname",
+      "firstName": "REALNAME-firstname",
+      "officeLocation": "Remote",
+      "isStaff": true,
+      "location": "Somewhere",
+      "title": "Principal Software Engineer",
+      "primaryEmail": "USER-c0ffee12@example.com",
+      "funTitle": "",
+      "picture": "https://example.com/avatar.png",
+      "username": "USER-c0ffee12"
+    }
+  ]
+}
