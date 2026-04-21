@@ -11,6 +11,7 @@ from herald_scraper.people_client import (
     extract_bugzilla_id,
     extract_github_id,
     extract_github_username,
+    find_username_by_real_name,
     find_username_case_insensitive,
 )
 
@@ -323,6 +324,71 @@ class TestExtractBugzillaId:
         assert extract_bugzilla_id(response) is None
 
 
+class TestFindUsernameByRealName:
+    """Tests for find_username_by_real_name helper."""
+
+    def test_matches_firstname_lastname_concatenation(self):
+        response = {
+            "dinos": [
+                {"username": "tim_xia", "firstName": "Tim", "lastName": "Xia"}
+            ]
+        }
+        assert find_username_by_real_name(response, "Tim Xia") == "tim_xia"
+
+    def test_case_insensitive(self):
+        response = {
+            "dinos": [
+                {"username": "tim_xia", "firstName": "tim", "lastName": "XIA"}
+            ]
+        }
+        assert find_username_by_real_name(response, "Tim Xia") == "tim_xia"
+
+    def test_picks_matching_dino_out_of_many(self):
+        response = {
+            "dinos": [
+                {"username": "jxia", "firstName": "Jiechen", "lastName": "Xia"},
+                {"username": "tim_xia", "firstName": "Tim", "lastName": "Xia"},
+                {"username": "rxia", "firstName": "Rong", "lastName": "Xia"},
+            ]
+        }
+        assert find_username_by_real_name(response, "Tim Xia") == "tim_xia"
+
+    def test_returns_none_when_no_match(self):
+        response = {
+            "dinos": [
+                {"username": "other", "firstName": "Someone", "lastName": "Else"}
+            ]
+        }
+        assert find_username_by_real_name(response, "Tim Xia") is None
+
+    def test_handles_missing_name_fields(self):
+        response = {
+            "dinos": [
+                {"username": "nofirst", "lastName": "Xia"},
+                {"username": "nolast", "firstName": "Tim"},
+                {"username": "tim_xia", "firstName": "Tim", "lastName": "Xia"},
+            ]
+        }
+        assert find_username_by_real_name(response, "Tim Xia") == "tim_xia"
+
+    def test_collapses_whitespace(self):
+        response = {
+            "dinos": [
+                {"username": "tim_xia", "firstName": "Tim", "lastName": "Xia"}
+            ]
+        }
+        assert find_username_by_real_name(response, "  Tim   Xia  ") == "tim_xia"
+
+    def test_empty_real_name_returns_none(self):
+        response = {
+            "dinos": [
+                {"username": "tim_xia", "firstName": "Tim", "lastName": "Xia"}
+            ]
+        }
+        assert find_username_by_real_name(response, "") is None
+        assert find_username_by_real_name(response, "   ") is None
+
+
 class TestFindUsernameCaseInsensitive:
     """Tests for find_username_case_insensitive helper."""
 
@@ -506,6 +572,122 @@ class TestSearchSimpleFixture:
         assert result.username is None
         # Both candidates probed, neither matched, no retry.
         assert client._session.post.call_count == 3
+
+    def test_resolve_github_real_name_fallback_picks_correct_dino(self):
+        """txia: 3 candidates, only Tim Xia's real name matches Phab's realName."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        miss = MagicMock()
+        miss.json.return_value = {"data": None, "errors": []}
+        # BMO probes return null id for every candidate (search/simple surfaces
+        # three Xias, none with a public BMO id in PMO), forcing the real-name
+        # fallback.
+        null_bmo_1 = MagicMock()
+        null_bmo_1.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": None}}}
+        }
+        null_bmo_2 = MagicMock()
+        null_bmo_2.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": None}}}
+        }
+        null_bmo_3 = MagicMock()
+        null_bmo_3.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": None}}}
+        }
+        retry = MagicMock()
+        retry.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "7"}}}}
+        }
+        # Final verification: PMO has no BMO id, so verification is skipped.
+        verify = MagicMock()
+        verify.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": None}}}
+        }
+        client._session.post.side_effect = [
+            miss, null_bmo_1, null_bmo_2, null_bmo_3, retry, verify,
+        ]
+
+        search = MagicMock()
+        search.json.return_value = {
+            "total": 3,
+            "next": "",
+            "dinos": [
+                {
+                    "username": "tim_xia",
+                    "firstName": "Tim",
+                    "lastName": "Xia",
+                    "primaryEmail": "txia@example.com",
+                },
+                {
+                    "username": "jxia",
+                    "firstName": "Jiechen",
+                    "lastName": "Xia",
+                    "primaryEmail": "jxia@example.com",
+                },
+                {
+                    "username": "rxia",
+                    "firstName": "Rong",
+                    "lastName": "Xia",
+                    "primaryEmail": "rxia@example.com",
+                },
+            ],
+        }
+        rest = MagicMock()
+        rest.json.return_value = {"username": "gh-tim"}
+        client._session.get.side_effect = [search, rest]
+
+        result = client.resolve_github(
+            "txia", expected_bmo_id="717632", expected_real_name="Tim Xia"
+        )
+
+        assert result.username == "gh-tim"
+        assert result.user_id == 7
+        # Retry uses the canonical PMO username (tim_xia).
+        retry_payload = client._session.post.call_args_list[4].kwargs["json"]
+        assert retry_payload["operationName"] == "GetGitHubId"
+        assert retry_payload["variables"]["username"] == "tim_xia"
+
+    def test_resolve_github_real_name_fallback_skipped_when_bmo_match_succeeds(self):
+        """BMO-id match must win over real-name match when both are available."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        miss = MagicMock()
+        miss.json.return_value = {"data": None, "errors": []}
+        # First candidate's PMO BMO id matches the expected id → early return.
+        matching_bmo = MagicMock()
+        matching_bmo.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": {"value": "42"}}}}
+        }
+        retry = MagicMock()
+        retry.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "9"}}}}
+        }
+        verify = MagicMock()
+        verify.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": {"value": "42"}}}}
+        }
+        client._session.post.side_effect = [miss, matching_bmo, retry, verify]
+
+        search = MagicMock()
+        search.json.return_value = {
+            "dinos": [
+                {"username": "winner", "firstName": "Wrong", "lastName": "Name"},
+                {"username": "loser", "firstName": "Real", "lastName": "Name"},
+            ]
+        }
+        rest = MagicMock()
+        rest.json.return_value = {"username": "gh-winner"}
+        client._session.get.side_effect = [search, rest]
+
+        result = client.resolve_github(
+            "phabuser", expected_bmo_id="42", expected_real_name="Real Name"
+        )
+
+        assert result.username == "gh-winner"
+        retry_payload = client._session.post.call_args_list[2].kwargs["json"]
+        assert retry_payload["variables"]["username"] == "winner"
 
     def test_resolve_github_bmo_id_fallback_requires_expected_id(self):
         """Without expected_bmo_id, divergent usernames stay unresolved."""

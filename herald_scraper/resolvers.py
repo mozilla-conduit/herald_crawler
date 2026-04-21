@@ -225,7 +225,8 @@ class UsernameResolver:
         self.conduit_client = conduit_client
         self._cache: Dict[str, GitHubUser] = {}
         self._unresolved: Dict[str, str] = {}  # username -> reason
-        self._phab_bmo_id_cache: Dict[str, Optional[str]] = {}
+        # username -> (bmo_id, real_name); either value may be None
+        self._phab_info_cache: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
 
     def extract_usernames_from_rules(
         self, rules: List[Rule], group_slugs: Set[str]
@@ -298,31 +299,41 @@ class UsernameResolver:
         logger.debug(f"Extracted {len(username_refs)} unique usernames from {len(groups)} groups")
         return username_refs
 
-    def _fetch_phab_bmo_id(self, username: str) -> Optional[str]:
-        """Fetch the Bugzilla account id linked to a Phabricator user.
+    def _fetch_phab_info(
+        self, username: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Fetch ``(bmo_id, real_name)`` for a Phabricator user.
 
-        Returns ``None`` if no Conduit client is configured, the user
-        doesn't exist in Phabricator, or has no linked Bugzilla account.
+        Returns ``(None, None)`` if no Conduit client is configured, the
+        user doesn't exist in Phabricator, or the lookups fail. Either
+        component may independently be ``None`` (no linked Bugzilla
+        account, no real name set).
         """
         if self.conduit_client is None:
-            return None
-        if username in self._phab_bmo_id_cache:
-            return self._phab_bmo_id_cache[username]
+            return (None, None)
+        if username in self._phab_info_cache:
+            return self._phab_info_cache[username]
 
         bmo_id: Optional[str] = None
+        real_name: Optional[str] = None
         try:
             users = self.conduit_client.user_search(usernames=[username])
-            phid = users[0].get("phid") if users else None
-            if phid:
-                accounts = self.conduit_client.bugzilla_account_search(phids=[phid])
-                if accounts:
-                    raw_id = accounts[0].get("id")
-                    bmo_id = str(raw_id) if raw_id is not None else None
+            if users:
+                first = users[0]
+                phid = first.get("phid")
+                raw_name = first.get("fields", {}).get("realName")
+                if raw_name:
+                    real_name = str(raw_name).strip() or None
+                if phid:
+                    accounts = self.conduit_client.bugzilla_account_search(phids=[phid])
+                    if accounts:
+                        raw_id = accounts[0].get("id")
+                        bmo_id = str(raw_id) if raw_id is not None else None
         except Exception as e:
-            logger.warning(f"Failed to fetch Phab BMO id for {username}: {e}")
+            logger.warning(f"Failed to fetch Phab info for {username}: {e}")
 
-        self._phab_bmo_id_cache[username] = bmo_id
-        return bmo_id
+        self._phab_info_cache[username] = (bmo_id, real_name)
+        return (bmo_id, real_name)
 
     def resolve_username(self, username: str) -> Optional[GitHubUser]:
         """
@@ -350,9 +361,11 @@ class UsernameResolver:
             return None
 
         try:
-            expected_bmo_id = self._fetch_phab_bmo_id(lookup_name)
+            expected_bmo_id, expected_real_name = self._fetch_phab_info(lookup_name)
             resolution = self.client.resolve_github(
-                lookup_name, expected_bmo_id=expected_bmo_id
+                lookup_name,
+                expected_bmo_id=expected_bmo_id,
+                expected_real_name=expected_real_name,
             )
 
             if resolution.username or resolution.user_id:
@@ -457,7 +470,7 @@ class UsernameResolver:
         """Clear the internal caches."""
         self._cache.clear()
         self._unresolved.clear()
-        self._phab_bmo_id_cache.clear()
+        self._phab_info_cache.clear()
         logger.debug("Username resolver cache cleared")
 
 

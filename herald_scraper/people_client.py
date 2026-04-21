@@ -147,7 +147,10 @@ class PeopleDirectoryClient:
         return result
 
     def resolve_github(
-        self, username: str, expected_bmo_id: Optional[str] = None
+        self,
+        username: str,
+        expected_bmo_id: Optional[str] = None,
+        expected_real_name: Optional[str] = None,
     ) -> GitHubResolution:
         """Resolve Phabricator username to GitHub username and user ID.
 
@@ -159,6 +162,10 @@ class PeopleDirectoryClient:
                 Phabricator's bugzilla.account.search, that the PMO profile
                 must also expose via bugzillaMozillaOrgId. When provided and
                 it doesn't match, the resolution is dropped.
+            expected_real_name: Optional real name from Phabricator
+                ``user.search``. Used as a tertiary fallback to pick a PMO
+                profile when the username is divergent and ``bugzillaMozillaOrgId``
+                is absent (so BMO-id matching can't run).
 
         Returns:
             GitHubResolution with username and user_id (either may be None)
@@ -180,6 +187,8 @@ class PeopleDirectoryClient:
             resolved = find_username_case_insensitive(search_response, username)
             if not resolved and expected_bmo_id is not None:
                 resolved = self._find_username_by_bmo_id(search_response, expected_bmo_id)
+            if not resolved and expected_real_name is not None:
+                resolved = find_username_by_real_name(search_response, expected_real_name)
             if resolved and resolved != username:
                 logger.info(f"PMO username fallback: {username} -> {resolved}")
                 time.sleep(self.delay)
@@ -376,6 +385,47 @@ def _profile_not_found(graphql_response: dict) -> bool:
     if data is None:
         return True
     return data.get("profile") is None
+
+
+def find_username_by_real_name(response: dict, real_name: str) -> Optional[str]:
+    """Find the ``primary_username`` from a search response whose dino has
+    a ``firstName + " " + lastName`` matching ``real_name`` (case-insensitive,
+    whitespace-collapsed).
+
+    Useful as a last-resort fallback when the Phab and PMO usernames have
+    diverged and the PMO profile has no ``bugzillaMozillaOrgId`` to match
+    against. Returns the first matching dino's username; callers should have
+    already filtered by cheaper signals (case-insensitive username, BMO id)
+    before reaching for this.
+
+    Examples:
+        >>> find_username_by_real_name(
+        ...     {"dinos": [{"firstName": "Tim", "lastName": "Xia", "username": "tim_xia"}]},
+        ...     "Tim Xia",
+        ... )
+        'tim_xia'
+        >>> find_username_by_real_name(
+        ...     {"dinos": [{"firstName": "tim", "lastName": "XIA", "username": "tim_xia"}]},
+        ...     "Tim Xia",
+        ... )
+        'tim_xia'
+        >>> find_username_by_real_name({"dinos": []}, "Tim Xia")
+    """
+    if not real_name:
+        return None
+    target = " ".join(real_name.split()).lower()
+    if not target:
+        return None
+    for dino in response.get("dinos") or []:
+        candidate = dino.get("username")
+        first = (dino.get("firstName") or "").strip()
+        last = (dino.get("lastName") or "").strip()
+        if not candidate or not first or not last:
+            continue
+        full = " ".join(f"{first} {last}".split()).lower()
+        if full == target:
+            return str(candidate)
+    return None
 
 
 def find_username_case_insensitive(response: dict, query: str) -> Optional[str]:
