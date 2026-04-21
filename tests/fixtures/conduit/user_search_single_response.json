@@ -1,0 +1,39 @@
+{
+  "result": {
+    "data": [
+      {
+        "id": 173,
+        "type": "USER",
+        "phid": "PHID-USER-aabe0232e32f0b571107",
+        "fields": {
+          "username": "USER-5e421c00",
+          "realName": "REALNAME-07c9f87b",
+          "roles": [
+            "verified",
+            "approved",
+            "activated"
+          ],
+          "dateCreated": 1521741407,
+          "dateModified": 1725554161,
+          "policy": {
+            "view": "public",
+            "edit": "no-one"
+          }
+        },
+        "attachments": {}
+      }
+    ],
+    "maps": {},
+    "query": {
+      "queryKey": null
+    },
+    "cursor": {
+      "limit": 100,
+      "after": null,
+      "before": null,
+      "order": null
+    }
+  },
+  "error_code": null,
+  "error_info": null
+}
