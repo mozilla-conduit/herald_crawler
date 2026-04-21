@@ -553,6 +553,36 @@ class TestSearchSimpleFixture:
         bmo_payload = client._session.post.call_args_list[1].kwargs["json"]
         assert bmo_payload["operationName"] == "GetBugzillaId"
 
+    def test_resolve_github_accepts_when_pmo_bmo_id_is_null(self, search_response):
+        """PMO profile without a BMO id shouldn't reject the resolution.
+
+        Mirrors hsohaney: PMO has the profile + github id, but bugzillaMozillaOrgId
+        is null while Phab's bugzilla.account.search reports an id. No
+        contradiction, so we keep the resolution.
+        """
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        github_hit = MagicMock()
+        github_hit.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "42"}}}}
+        }
+        bmo_missing = MagicMock()
+        bmo_missing.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": None}}}
+        }
+        client._session.post.side_effect = [github_hit, bmo_missing]
+
+        rest = MagicMock()
+        rest.json.return_value = {"username": "gh-canonical"}
+        client._session.get.return_value = rest
+
+        result = client.resolve_github("phabuser", expected_bmo_id="726750")
+
+        assert result.username == "gh-canonical"
+        assert result.user_id == 42
+        client._session.get.assert_called_once()
+
     def test_resolve_github_rejects_on_bmo_id_mismatch(self, search_response):
         """A mismatched BMO id drops the resolution and skips the REST lookup."""
         client = PeopleDirectoryClient(cookie="test-cookie", delay=0)

@@ -202,12 +202,20 @@ class PeopleDirectoryClient:
         # Optional BMO id cross-check. Ensures the PMO profile we resolved
         # actually belongs to the Phabricator user we started from — catches
         # case collisions between different people that the username-based
-        # fallback cannot distinguish.
+        # fallback cannot distinguish. Only an *active* disagreement rejects:
+        # if PMO doesn't expose a BMO id for this profile (privacy settings,
+        # unlinked, etc.), there's nothing to contradict, so we keep the
+        # resolution.
         if expected_bmo_id is not None:
             time.sleep(self.delay)
             bmo_response = self.get_bugzilla_id(canonical_name)
             actual_bmo_id = extract_bugzilla_id(bmo_response)
-            if actual_bmo_id != expected_bmo_id:
+            if actual_bmo_id is None:
+                logger.debug(
+                    f"BMO id unknown in PMO for {username} (PMO={canonical_name}); "
+                    f"accepting resolution without verification"
+                )
+            elif actual_bmo_id != expected_bmo_id:
                 logger.warning(
                     f"BMO id mismatch for {username} (PMO={canonical_name}): "
                     f"phabricator={expected_bmo_id!r} pmo={actual_bmo_id!r}"
