@@ -5,16 +5,14 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from herald_scraper.client import HeraldClient
+from herald_scraper.conduit_client import ConduitClient
 from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.models import GitHubUser, Group, Rule, UnresolvedUser
 from herald_scraper.parsers import ProjectMembersPageParser, ProjectPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
-
-if TYPE_CHECKING:
-    from herald_scraper.conduit_client import ConduitClient
 
 logger = logging.getLogger(__name__)
 
@@ -208,16 +206,26 @@ class GroupCollector:
 class UsernameResolver:
     """Resolves Phabricator usernames to GitHub usernames and user IDs."""
 
-    def __init__(self, client: PeopleDirectoryClient) -> None:
+    def __init__(
+        self,
+        client: PeopleDirectoryClient,
+        conduit_client: Optional[ConduitClient] = None,
+    ) -> None:
         """
         Initialize the UsernameResolver.
 
         Args:
             client: PeopleDirectoryClient instance for resolving usernames
+            conduit_client: Optional ConduitClient. When provided, each
+                resolution cross-checks the PMO profile's
+                ``bugzillaMozillaOrgId`` against Phabricator's
+                ``bugzilla.account.search`` result for the same user.
         """
         self.client = client
+        self.conduit_client = conduit_client
         self._cache: Dict[str, GitHubUser] = {}
         self._unresolved: Dict[str, str] = {}  # username -> reason
+        self._phab_bmo_id_cache: Dict[str, Optional[str]] = {}
 
     def extract_usernames_from_rules(
         self, rules: List[Rule], group_slugs: Set[str]
@@ -290,6 +298,32 @@ class UsernameResolver:
         logger.debug(f"Extracted {len(username_refs)} unique usernames from {len(groups)} groups")
         return username_refs
 
+    def _fetch_phab_bmo_id(self, username: str) -> Optional[str]:
+        """Fetch the Bugzilla account id linked to a Phabricator user.
+
+        Returns ``None`` if no Conduit client is configured, the user
+        doesn't exist in Phabricator, or has no linked Bugzilla account.
+        """
+        if self.conduit_client is None:
+            return None
+        if username in self._phab_bmo_id_cache:
+            return self._phab_bmo_id_cache[username]
+
+        bmo_id: Optional[str] = None
+        try:
+            users = self.conduit_client.user_search(usernames=[username])
+            phid = users[0].get("phid") if users else None
+            if phid:
+                accounts = self.conduit_client.bugzilla_account_search(phids=[phid])
+                if accounts:
+                    raw_id = accounts[0].get("id")
+                    bmo_id = str(raw_id) if raw_id is not None else None
+        except Exception as e:
+            logger.warning(f"Failed to fetch Phab BMO id for {username}: {e}")
+
+        self._phab_bmo_id_cache[username] = bmo_id
+        return bmo_id
+
     def resolve_username(self, username: str) -> Optional[GitHubUser]:
         """
         Resolve a single Phabricator username to GitHub user info.
@@ -316,7 +350,10 @@ class UsernameResolver:
             return None
 
         try:
-            resolution = self.client.resolve_github(lookup_name)
+            expected_bmo_id = self._fetch_phab_bmo_id(lookup_name)
+            resolution = self.client.resolve_github(
+                lookup_name, expected_bmo_id=expected_bmo_id
+            )
 
             if resolution.username or resolution.user_id:
                 github_user = GitHubUser(username=resolution.username, user_id=resolution.user_id)
@@ -420,6 +457,7 @@ class UsernameResolver:
         """Clear the internal caches."""
         self._cache.clear()
         self._unresolved.clear()
+        self._phab_bmo_id_cache.clear()
         logger.debug("Username resolver cache cleared")
 
 

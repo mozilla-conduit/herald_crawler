@@ -308,6 +308,77 @@ class TestConduitClientUserSearch:
             conduit_client.user_search()
 
 
+class TestConduitClientBugzillaAccountSearch:
+    """Tests for ConduitClient.bugzilla_account_search()."""
+
+    @pytest.fixture
+    def bugzilla_account_search_response(self, conduit_fixtures_path: Path) -> Dict[str, Any]:
+        with open(conduit_fixtures_path / "bugzilla_account_search_response.json") as f:
+            data: Dict[str, Any] = json.load(f)
+            return data
+
+    @pytest.fixture
+    def bugzilla_account_search_empty_response(
+        self, conduit_fixtures_path: Path
+    ) -> Dict[str, Any]:
+        with open(conduit_fixtures_path / "bugzilla_account_search_empty_response.json") as f:
+            data: Dict[str, Any] = json.load(f)
+            return data
+
+    def test_by_phid_returns_id(
+        self,
+        conduit_client: ConduitClient,
+        bugzilla_account_search_response: Dict[str, Any],
+    ) -> None:
+        with patch.object(conduit_client, "call_method") as mock_call:
+            mock_call.return_value = bugzilla_account_search_response["result"]
+
+            results = conduit_client.bugzilla_account_search(
+                phids=["PHID-USER-aabe0232e32f0b571107"]
+            )
+
+            assert len(results) == 1
+            assert results[0]["id"] == "99999999"
+            assert results[0]["phid"] == "PHID-USER-aabe0232e32f0b571107"
+
+    def test_flattens_direct_phids_param(self, conduit_client: ConduitClient) -> None:
+        """phids/ids go at the top level, not inside `constraints`."""
+        with patch.object(conduit_client, "call_method") as mock_call:
+            mock_call.return_value = []
+
+            conduit_client.bugzilla_account_search(phids=["PHID-USER-x"])
+
+            mock_call.assert_called_once_with(
+                "bugzilla.account.search", {"phids": ["PHID-USER-x"]}
+            )
+
+    def test_by_id(self, conduit_client: ConduitClient) -> None:
+        with patch.object(conduit_client, "call_method") as mock_call:
+            mock_call.return_value = [{"id": "91159", "phid": "PHID-USER-x"}]
+
+            results = conduit_client.bugzilla_account_search(ids=["91159"])
+
+            mock_call.assert_called_once_with("bugzilla.account.search", {"ids": ["91159"]})
+            assert results[0]["id"] == "91159"
+
+    def test_empty_result(
+        self,
+        conduit_client: ConduitClient,
+        bugzilla_account_search_empty_response: Dict[str, Any],
+    ) -> None:
+        """Users without a BMO account yield an empty list (not an error)."""
+        with patch.object(conduit_client, "call_method") as mock_call:
+            mock_call.return_value = bugzilla_account_search_empty_response["result"]
+
+            results = conduit_client.bugzilla_account_search(phids=["PHID-USER-x"])
+
+            assert results == []
+
+    def test_no_constraints_raises(self, conduit_client: ConduitClient) -> None:
+        with pytest.raises(ValueError, match="ids.*phids"):
+            conduit_client.bugzilla_account_search()
+
+
 # --- ConduitGroupCollector Tests ---
 
 

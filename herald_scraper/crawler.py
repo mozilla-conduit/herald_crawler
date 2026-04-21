@@ -272,7 +272,7 @@ class HeraldCrawler:
 
         if people_client and rules:
             logger.info("Resolving GitHub usernames for users")
-            username_resolver = UsernameResolver(people_client)
+            username_resolver = UsernameResolver(people_client, conduit_client=conduit_client)
 
             # Pre-populate cache with existing data
             for username, gh_user in existing_github_users.items():

@@ -8,6 +8,7 @@ import pytest
 
 from herald_scraper.people_client import (
     PeopleDirectoryClient,
+    extract_bugzilla_id,
     extract_github_id,
     extract_github_username,
     find_username_case_insensitive,
@@ -289,6 +290,39 @@ class TestPeopleDirectoryClient:
         assert client._session.get.call_count == 1
 
 
+class TestExtractBugzillaId:
+    """Tests for extract_bugzilla_id function."""
+
+    def test_extract_bugzilla_id_success(self):
+        response = {
+            "data": {
+                "profile": {
+                    "identities": {"bugzillaMozillaOrgId": {"value": "91159"}}
+                }
+            }
+        }
+        assert extract_bugzilla_id(response) == "91159"
+
+    def test_extract_bugzilla_id_from_fixture(self):
+        with open(FIXTURES_DIR / "USER-5e421c00_graphql_bmo.json") as f:
+            data = json.load(f)
+        assert extract_bugzilla_id(data) == "99999999"
+
+    def test_extract_bugzilla_id_profile_missing(self):
+        response = {"data": None, "errors": [{"message": "profile does not exist"}]}
+        assert extract_bugzilla_id(response) is None
+
+    def test_extract_bugzilla_id_field_absent(self):
+        response = {"data": {"profile": {"identities": {}}}}
+        assert extract_bugzilla_id(response) is None
+
+    def test_extract_bugzilla_id_null_value(self):
+        response = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": None}}}
+        }
+        assert extract_bugzilla_id(response) is None
+
+
 class TestFindUsernameCaseInsensitive:
     """Tests for find_username_case_insensitive helper."""
 
@@ -371,6 +405,56 @@ class TestSearchSimpleFixture:
             PMO_SEARCH_SIMPLE_URL, params={"q": "c0ffee12", "w": "all"}
         )
         mocked.raise_for_status.assert_called_once()
+
+    def test_resolve_github_verifies_bmo_id(self, search_response):
+        """When expected_bmo_id is provided, the resolver confirms it against PMO."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        github_hit = MagicMock()
+        github_hit.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "42"}}}}
+        }
+        bmo_hit = MagicMock()
+        bmo_hit.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": {"value": "99999999"}}}}
+        }
+        client._session.post.side_effect = [github_hit, bmo_hit]
+
+        rest = MagicMock()
+        rest.json.return_value = {"username": "gh-canonical"}
+        client._session.get.return_value = rest
+
+        result = client.resolve_github("phabuser", expected_bmo_id="99999999")
+
+        assert result.username == "gh-canonical"
+        assert result.user_id == 42
+        assert client._session.post.call_count == 2
+        bmo_payload = client._session.post.call_args_list[1].kwargs["json"]
+        assert bmo_payload["operationName"] == "GetBugzillaId"
+
+    def test_resolve_github_rejects_on_bmo_id_mismatch(self, search_response):
+        """A mismatched BMO id drops the resolution and skips the REST lookup."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        github_hit = MagicMock()
+        github_hit.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "42"}}}}
+        }
+        bmo_hit = MagicMock()
+        bmo_hit.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": {"value": "11111111"}}}}
+        }
+        client._session.post.side_effect = [github_hit, bmo_hit]
+        client._session.get.return_value = MagicMock()  # would be the REST call
+
+        result = client.resolve_github("phabuser", expected_bmo_id="99999999")
+
+        assert result.username is None
+        assert result.user_id is None
+        # REST /whoami/github/username/ must not be called when verification fails.
+        client._session.get.assert_not_called()
 
     def test_resolve_github_uses_fixture_for_case_recovery(self, search_response):
         """Full flow: initial GraphQL miss -> simple search -> retry GraphQL with canonical case."""

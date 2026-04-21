@@ -30,6 +30,18 @@ query GetGitHubId($username: String) {
 }
 """
 
+# PMO's GraphQL 500s when a single query selects multiple identity fields
+# at once, so we issue BMO lookups as their own request.
+BUGZILLA_ID_QUERY = """
+query GetBugzillaId($username: String) {
+  profile(username: $username) {
+    identities {
+      bugzillaMozillaOrgId { value }
+    }
+  }
+}
+"""
+
 
 class PeopleDirectoryClient:
     """Client for Mozilla People Directory API.
@@ -68,6 +80,28 @@ class PeopleDirectoryClient:
         }
 
         logger.debug(f"Querying GitHub ID for: {username}")
+        response = self._session.post(PMO_GRAPHQL_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        result: dict = response.json()
+        return result
+
+    def get_bugzilla_id(self, username: str) -> dict:
+        """Get Bugzilla account ID for a PMO profile via GraphQL.
+
+        Args:
+            username: PMO primary username (canonical case)
+
+        Returns:
+            Raw JSON response from GraphQL API
+        """
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "operationName": "GetBugzillaId",
+            "variables": {"username": username},
+            "query": BUGZILLA_ID_QUERY,
+        }
+
+        logger.debug(f"Querying Bugzilla ID for: {username}")
         response = self._session.post(PMO_GRAPHQL_URL, headers=headers, json=payload)
         response.raise_for_status()
         result: dict = response.json()
@@ -112,13 +146,19 @@ class PeopleDirectoryClient:
         result: dict = response.json()
         return result
 
-    def resolve_github(self, username: str) -> GitHubResolution:
+    def resolve_github(
+        self, username: str, expected_bmo_id: Optional[str] = None
+    ) -> GitHubResolution:
         """Resolve Phabricator username to GitHub username and user ID.
 
         This is the main method that performs the full two-step resolution.
 
         Args:
             username: Phabricator username
+            expected_bmo_id: Optional Bugzilla account id, sourced from
+                Phabricator's bugzilla.account.search, that the PMO profile
+                must also expose via bugzillaMozillaOrgId. When provided and
+                it doesn't match, the resolution is dropped.
 
         Returns:
             GitHubResolution with username and user_id (either may be None)
@@ -126,6 +166,7 @@ class PeopleDirectoryClient:
         # Step 1: Get GitHub ID
         graphql_response = self.get_github_id(username)
         github_id = extract_github_id(graphql_response)
+        canonical_name = username
 
         # The GraphQL profile lookup is case-sensitive. If the user wasn't
         # found, fall back to the simple search endpoint to recover the
@@ -139,6 +180,8 @@ class PeopleDirectoryClient:
                 time.sleep(self.delay)
                 graphql_response = self.get_github_id(resolved)
                 github_id = extract_github_id(graphql_response)
+                if github_id:
+                    canonical_name = resolved
 
         if not github_id:
             logger.debug(f"No GitHub ID found for: {username}")
@@ -150,6 +193,21 @@ class PeopleDirectoryClient:
         except ValueError:
             logger.warning(f"Invalid GitHub ID format: {github_id}")
             return GitHubResolution(username=None, user_id=None)
+
+        # Optional BMO id cross-check. Ensures the PMO profile we resolved
+        # actually belongs to the Phabricator user we started from — catches
+        # case collisions between different people that the username-based
+        # fallback cannot distinguish.
+        if expected_bmo_id is not None:
+            time.sleep(self.delay)
+            bmo_response = self.get_bugzilla_id(canonical_name)
+            actual_bmo_id = extract_bugzilla_id(bmo_response)
+            if actual_bmo_id != expected_bmo_id:
+                logger.warning(
+                    f"BMO id mismatch for {username} (PMO={canonical_name}): "
+                    f"phabricator={expected_bmo_id!r} pmo={actual_bmo_id!r}"
+                )
+                return GitHubResolution(username=None, user_id=None)
 
         # Rate limit between API calls
         time.sleep(self.delay)
@@ -213,6 +271,34 @@ def extract_github_id(response: dict) -> Optional[str]:
             return None
 
         value: Optional[str] = github_id_obj.get("value")
+        return value
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
+def extract_bugzilla_id(response: dict) -> Optional[str]:
+    """Extract Bugzilla account ID from a ``GetBugzillaId`` GraphQL response.
+
+    The field lives at ``data.profile.identities.bugzillaMozillaOrgId.value``
+    and is a numeric-looking string (e.g. ``"91159"``).
+
+    Examples:
+        >>> extract_bugzilla_id({"data": {"profile": {"identities": {
+        ...     "bugzillaMozillaOrgId": {"value": "91159"}}}}})
+        '91159'
+        >>> extract_bugzilla_id({"data": None, "errors": [...]})  # doctest: +SKIP
+        None
+    """
+    try:
+        data = response.get("data")
+        if not data:
+            return None
+        profile = data.get("profile")
+        if not profile:
+            return None
+        identities = profile.get("identities") or {}
+        bmo = identities.get("bugzillaMozillaOrgId") or {}
+        value: Optional[str] = bmo.get("value")
         return value
     except (KeyError, TypeError, AttributeError):
         return None
