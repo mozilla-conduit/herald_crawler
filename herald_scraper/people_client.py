@@ -168,15 +168,20 @@ class PeopleDirectoryClient:
         github_id = extract_github_id(graphql_response)
         canonical_name = username
 
-        # The GraphQL profile lookup is case-sensitive. If the user wasn't
-        # found, fall back to the simple search endpoint to recover the
-        # correct case of their PMO primary_username, then retry.
+        # The GraphQL profile lookup is case-sensitive *and* people can keep
+        # entirely different usernames between Phab and PMO (e.g. `yjuglaret`
+        # in Phab vs. `yannis` in PMO). Fall back to the simple search
+        # endpoint and try two matching strategies:
+        #   1. case-insensitive equality on the Phab username, and
+        #   2. BMO-id equality against the expected id from Phab.
         if not github_id and _profile_not_found(graphql_response):
             time.sleep(self.delay)
             search_response = self.search_simple(username)
             resolved = find_username_case_insensitive(search_response, username)
+            if not resolved and expected_bmo_id is not None:
+                resolved = self._find_username_by_bmo_id(search_response, expected_bmo_id)
             if resolved and resolved != username:
-                logger.info(f"Case-insensitive match: {username} -> {resolved}")
+                logger.info(f"PMO username fallback: {username} -> {resolved}")
                 time.sleep(self.delay)
                 graphql_response = self.get_github_id(resolved)
                 github_id = extract_github_id(graphql_response)
@@ -222,6 +227,35 @@ class PeopleDirectoryClient:
             logger.warning(f"Could not resolve GitHub username from ID {github_id}")
 
         return GitHubResolution(username=github_username, user_id=github_user_id)
+
+    def _find_username_by_bmo_id(
+        self, search_response: dict, expected_bmo_id: str
+    ) -> Optional[str]:
+        """Pick the dino from a search response whose PMO profile carries
+        ``expected_bmo_id``.
+
+        Issues one PMO GraphQL request per candidate dino, returning the
+        first ``username`` whose ``bugzillaMozillaOrgId`` matches. Candidates
+        without a username are skipped.
+
+        This handles the case where the Phab nickname and the PMO
+        ``primary_username`` have diverged entirely (not just in case) and
+        the search endpoint surfaces the right profile via fuzzy matching
+        on other fields (email, real name).
+        """
+        for dino in search_response.get("dinos") or []:
+            candidate = dino.get("username")
+            if not candidate:
+                continue
+            time.sleep(self.delay)
+            bmo_response = self.get_bugzilla_id(candidate)
+            candidate_bmo_id = extract_bugzilla_id(bmo_response)
+            if candidate_bmo_id and candidate_bmo_id == expected_bmo_id:
+                logger.info(
+                    f"BMO id match: PMO username={candidate!r} bmo_id={expected_bmo_id!r}"
+                )
+                return str(candidate)
+        return None
 
     def resolve_github_username(self, username: str) -> Optional[str]:
         """Resolve Phabricator username to GitHub username.

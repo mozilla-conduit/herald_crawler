@@ -406,6 +406,126 @@ class TestSearchSimpleFixture:
         )
         mocked.raise_for_status.assert_called_once()
 
+    def test_resolve_github_bmo_id_disambiguates_divergent_username(self):
+        """Phab username differs entirely from PMO username; BMO id picks the right dino.
+
+        Mirrors yjuglaret in Phab / yannis in PMO, both owned by BMO id 91159.
+        """
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        # Initial GraphQL miss on the Phab username.
+        miss = MagicMock()
+        miss.json.return_value = {
+            "data": None,
+            "errors": [{"message": "profile error: profile does not exist"}],
+        }
+        # BMO id probe on the divergent candidate hits.
+        candidate_bmo = MagicMock()
+        candidate_bmo.json.return_value = {
+            "data": {
+                "profile": {
+                    "identities": {"bugzillaMozillaOrgId": {"value": "91159"}}
+                }
+            }
+        }
+        # Retry GraphQL with canonical PMO username succeeds.
+        retry = MagicMock()
+        retry.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "42"}}}}
+        }
+        # Final verification query (again bmo id on canonical name).
+        verify = MagicMock()
+        verify.json.return_value = {
+            "data": {
+                "profile": {
+                    "identities": {"bugzillaMozillaOrgId": {"value": "91159"}}
+                }
+            }
+        }
+        client._session.post.side_effect = [miss, candidate_bmo, retry, verify]
+
+        # search_simple returns a dino whose username doesn't case-match the query
+        # but whose PMO profile carries the matching BMO id.
+        search = MagicMock()
+        search.json.return_value = {
+            "total": 1,
+            "next": "",
+            "dinos": [{"username": "yannis", "primaryEmail": "yjuglaret@mozilla.com"}],
+        }
+        rest = MagicMock()
+        rest.json.return_value = {"username": "gh-yannis"}
+        client._session.get.side_effect = [search, rest]
+
+        result = client.resolve_github("yjuglaret", expected_bmo_id="91159")
+
+        assert result.username == "gh-yannis"
+        assert result.user_id == 42
+        # Second post is the per-candidate BMO probe against "yannis"
+        probe_payload = client._session.post.call_args_list[1].kwargs["json"]
+        assert probe_payload["operationName"] == "GetBugzillaId"
+        assert probe_payload["variables"]["username"] == "yannis"
+        # Third post is the retried githubIdV3 query with the canonical name.
+        retry_payload = client._session.post.call_args_list[2].kwargs["json"]
+        assert retry_payload["operationName"] == "GetGitHubId"
+        assert retry_payload["variables"]["username"] == "yannis"
+
+    def test_resolve_github_bmo_id_skips_non_matching_candidates(self):
+        """When none of the search dinos carry the expected BMO id, give up."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        miss = MagicMock()
+        miss.json.return_value = {"data": None, "errors": []}
+        wrong_bmo_1 = MagicMock()
+        wrong_bmo_1.json.return_value = {
+            "data": {
+                "profile": {
+                    "identities": {"bugzillaMozillaOrgId": {"value": "00000001"}}
+                }
+            }
+        }
+        wrong_bmo_2 = MagicMock()
+        wrong_bmo_2.json.return_value = {
+            "data": {
+                "profile": {
+                    "identities": {"bugzillaMozillaOrgId": {"value": "00000002"}}
+                }
+            }
+        }
+        client._session.post.side_effect = [miss, wrong_bmo_1, wrong_bmo_2]
+
+        search = MagicMock()
+        search.json.return_value = {
+            "dinos": [{"username": "someone"}, {"username": "elsewhere"}],
+        }
+        client._session.get.return_value = search
+
+        result = client.resolve_github("phabuser", expected_bmo_id="91159")
+
+        assert result.username is None
+        # Both candidates probed, neither matched, no retry.
+        assert client._session.post.call_count == 3
+
+    def test_resolve_github_bmo_id_fallback_requires_expected_id(self):
+        """Without expected_bmo_id, divergent usernames stay unresolved."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        miss = MagicMock()
+        miss.json.return_value = {"data": None, "errors": []}
+        client._session.post.return_value = miss
+
+        search = MagicMock()
+        search.json.return_value = {"dinos": [{"username": "yannis"}]}
+        client._session.get.return_value = search
+
+        result = client.resolve_github("yjuglaret")
+
+        assert result.username is None
+        # Only the initial GraphQL call — no BMO probes without expected id.
+        assert client._session.post.call_count == 1
+
     def test_resolve_github_verifies_bmo_id(self, search_response):
         """When expected_bmo_id is provided, the resolver confirms it against PMO."""
         client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
