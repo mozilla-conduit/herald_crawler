@@ -11,6 +11,7 @@ from herald_scraper.people_client import (
     extract_bugzilla_id,
     extract_github_id,
     extract_github_username,
+    find_username_by_email_local_part,
     find_username_by_real_name,
     find_username_case_insensitive,
 )
@@ -387,6 +388,60 @@ class TestExtractBugzillaId:
         assert extract_bugzilla_id(response) is None
 
 
+class TestFindUsernameByEmailLocalPart:
+    """Tests for find_username_by_email_local_part helper."""
+
+    def test_matches_local_part(self):
+        response = {
+            "dinos": [
+                {"username": "m4x", "primaryEmail": "mpohle@mozilla.com"}
+            ]
+        }
+        assert find_username_by_email_local_part(response, "mpohle") == "m4x"
+
+    def test_case_insensitive(self):
+        response = {
+            "dinos": [
+                {"username": "m4x", "primaryEmail": "MPOHLE@mozilla.com"}
+            ]
+        }
+        assert find_username_by_email_local_part(response, "mpohle") == "m4x"
+        assert find_username_by_email_local_part(response, "MPOHLE") == "m4x"
+
+    def test_picks_matching_dino_out_of_many(self):
+        response = {
+            "dinos": [
+                {"username": "other", "primaryEmail": "other@mozilla.com"},
+                {"username": "m4x", "primaryEmail": "mpohle@mozilla.com"},
+                {"username": "unrelated", "primaryEmail": "foo@mozilla.com"},
+            ]
+        }
+        assert find_username_by_email_local_part(response, "mpohle") == "m4x"
+
+    def test_returns_none_when_no_match(self):
+        response = {
+            "dinos": [
+                {"username": "other", "primaryEmail": "other@mozilla.com"}
+            ]
+        }
+        assert find_username_by_email_local_part(response, "mpohle") is None
+
+    def test_skips_dinos_without_email(self):
+        response = {
+            "dinos": [
+                {"username": "noemail"},
+                {"username": "malformed", "primaryEmail": "no-at-sign"},
+                {"username": "m4x", "primaryEmail": "mpohle@mozilla.com"},
+            ]
+        }
+        assert find_username_by_email_local_part(response, "mpohle") == "m4x"
+
+    def test_empty_query_returns_none(self):
+        response = {"dinos": [{"username": "m4x", "primaryEmail": "m@x.com"}]}
+        assert find_username_by_email_local_part(response, "") is None
+        assert find_username_by_email_local_part(response, "   ") is None
+
+
 class TestFindUsernameByRealName:
     """Tests for find_username_by_real_name helper."""
 
@@ -710,6 +765,61 @@ class TestSearchSimpleFixture:
         retry_payload = client._session.post.call_args_list[4].kwargs["json"]
         assert retry_payload["operationName"] == "GetGitHubId"
         assert retry_payload["variables"]["username"] == "tim_xia"
+
+    def test_resolve_github_email_local_part_fallback(self):
+        """mpohle: divergent username, null PMO BMO id, partial realName.
+
+        Only email-local-part match identifies the PMO profile; its github
+        id is null, so the retry surfaces `no_github_linked` with the right
+        canonical username in the logs.
+        """
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        miss = MagicMock()
+        miss.json.return_value = {
+            "data": None,
+            "errors": [{"message": "profile error: profile does not exist"}],
+        }
+        # BMO probe on the candidate returns null.
+        null_bmo = MagicMock()
+        null_bmo.json.return_value = {
+            "data": {"profile": {"identities": {"bugzillaMozillaOrgId": None}}}
+        }
+        # Retry get_github_id on the canonical username (m4x) hits the
+        # profile but with no github id.
+        retry = MagicMock()
+        retry.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": None}}}
+        }
+        client._session.post.side_effect = [miss, null_bmo, retry]
+
+        search = MagicMock()
+        search.json.return_value = {
+            "total": 1,
+            "next": "",
+            "dinos": [
+                {
+                    "username": "m4x",
+                    "firstName": "Max Christian",
+                    "lastName": "Pohle",
+                    "primaryEmail": "mpohle@mozilla.com",
+                }
+            ],
+        }
+        client._session.get.return_value = search
+
+        result = client.resolve_github(
+            "mpohle", expected_bmo_id="711194", expected_real_name="Max"
+        )
+
+        assert result.username is None
+        assert result.user_id is None
+        # The profile was found (via email fallback) — just no github linked.
+        assert result.reason == "no_github_linked"
+        # Retry uses the canonical PMO username picked by email fallback.
+        retry_payload = client._session.post.call_args_list[2].kwargs["json"]
+        assert retry_payload["variables"]["username"] == "m4x"
 
     def test_resolve_github_real_name_fallback_skipped_when_bmo_match_succeeds(self):
         """BMO-id match must win over real-name match when both are available."""

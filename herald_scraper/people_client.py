@@ -198,10 +198,12 @@ class PeopleDirectoryClient:
         # The GraphQL profile lookup is case-sensitive *and* people can keep
         # entirely different usernames between Phab and PMO (e.g. `yjuglaret`
         # in Phab vs. `yannis` in PMO). Fall back to the simple search
-        # endpoint and try three matching strategies in order:
+        # endpoint and try four matching strategies in order:
         #   1. case-insensitive equality on the Phab username,
-        #   2. BMO-id equality against the expected id from Phab, and
-        #   3. real-name equality against the Phab realName.
+        #   2. BMO-id equality against the expected id from Phab,
+        #   3. real-name equality against the Phab realName, and
+        #   4. email local-part equality with the Phab username (e.g.
+        #      Phab `mpohle` -> PMO dino with primaryEmail mpohle@...).
         if not github_id and not profile_found:
             time.sleep(self.delay)
             search_response = self.search_simple(username)
@@ -210,6 +212,8 @@ class PeopleDirectoryClient:
                 resolved = self._find_username_by_bmo_id(search_response, expected_bmo_id)
             if not resolved and expected_real_name is not None:
                 resolved = find_username_by_real_name(search_response, expected_real_name)
+            if not resolved:
+                resolved = find_username_by_email_local_part(search_response, username)
             if resolved and resolved != username:
                 logger.info(f"PMO username fallback: {username} -> {resolved}")
                 time.sleep(self.delay)
@@ -421,6 +425,44 @@ def _profile_not_found(graphql_response: dict) -> bool:
     if data is None:
         return True
     return data.get("profile") is None
+
+
+def find_username_by_email_local_part(response: dict, phab_username: str) -> Optional[str]:
+    """Find the ``username`` of a dino whose ``primaryEmail`` local part
+    (everything before the ``@``) equals ``phab_username``, case-insensitive.
+
+    Handles the common Mozilla pattern where the Phab nickname mirrors
+    the mozilla.com email prefix while the PMO ``primary_username`` is
+    something unrelated (e.g. Phab ``mpohle`` / PMO ``m4x`` /
+    ``primaryEmail`` ``mpohle@mozilla.com``).
+
+    Examples:
+        >>> find_username_by_email_local_part(
+        ...     {"dinos": [{"username": "m4x", "primaryEmail": "mpohle@mozilla.com"}]},
+        ...     "mpohle",
+        ... )
+        'm4x'
+        >>> find_username_by_email_local_part(
+        ...     {"dinos": [{"username": "m4x", "primaryEmail": "mpohle@mozilla.com"}]},
+        ...     "MPOHLE",
+        ... )
+        'm4x'
+        >>> find_username_by_email_local_part({"dinos": []}, "mpohle")
+    """
+    if not phab_username:
+        return None
+    target = phab_username.strip().lower()
+    if not target:
+        return None
+    for dino in response.get("dinos") or []:
+        candidate = dino.get("username")
+        email = dino.get("primaryEmail") or ""
+        if not candidate or "@" not in email:
+            continue
+        local_part = email.split("@", 1)[0].strip().lower()
+        if local_part == target:
+            return str(candidate)
+    return None
 
 
 def find_username_by_real_name(response: dict, real_name: str) -> Optional[str]:
