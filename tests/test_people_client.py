@@ -209,6 +209,69 @@ class TestPeopleDirectoryClient:
         assert client._session.post.call_count == 1
         client._session.get.assert_called_once()
 
+    def test_resolve_github_reason_pmo_profile_not_found(self):
+        """Profile miss + no fallback match -> reason='pmo_profile_not_found'."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        miss = MagicMock()
+        miss.json.return_value = {
+            "data": None,
+            "errors": [{"message": "profile does not exist"}],
+        }
+        client._session.post.return_value = miss
+        search = MagicMock()
+        search.json.return_value = {"dinos": []}
+        client._session.get.return_value = search
+
+        result = client.resolve_github("ghost")
+
+        assert result.username is None
+        assert result.reason == "pmo_profile_not_found"
+
+    def test_resolve_github_reason_no_github_linked(self):
+        """Profile found but githubIdV3 null -> reason='no_github_linked'."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        hit = MagicMock()
+        hit.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": None}}}
+        }
+        client._session.post.return_value = hit
+
+        result = client.resolve_github("tobyp")
+
+        assert result.username is None
+        assert result.reason == "no_github_linked"
+        # Fallback search must not run when the direct profile hit (no
+        # _profile_not_found) tells us there's no GitHub linked.
+        client._session.get.assert_not_called()
+
+    def test_resolve_github_reason_bmo_id_mismatch(self):
+        """BMO id disagreement -> reason='bmo_id_mismatch'."""
+        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client._session = MagicMock()
+
+        hit = MagicMock()
+        hit.json.return_value = {
+            "data": {"profile": {"identities": {"githubIdV3": {"value": "1"}}}}
+        }
+        mismatch = MagicMock()
+        mismatch.json.return_value = {
+            "data": {
+                "profile": {
+                    "identities": {"bugzillaMozillaOrgId": {"value": "11"}}
+                }
+            }
+        }
+        client._session.post.side_effect = [hit, mismatch]
+
+        result = client.resolve_github("someone", expected_bmo_id="22")
+
+        assert result.username is None
+        assert result.reason == "bmo_id_mismatch"
+
     def test_resolve_github_username_no_github_linked(self):
         """Test resolution when user has no GitHub linked."""
         client = PeopleDirectoryClient(cookie="test-cookie")

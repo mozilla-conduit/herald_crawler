@@ -8,10 +8,29 @@ import requests
 
 
 class GitHubResolution(NamedTuple):
-    """Result of resolving a Phabricator username to GitHub."""
+    """Result of resolving a Phabricator username to GitHub.
+
+    On failure, ``reason`` carries a machine-readable code so callers can
+    distinguish between different failure modes:
+
+    - ``pmo_profile_not_found``: no PMO profile matched the Phab username,
+      and none of the fallbacks (case-insensitive, BMO-id, real-name) picked
+      a canonical PMO profile either.
+    - ``no_github_linked``: a PMO profile was found, but its
+      ``identities.githubIdV3`` field is null — the user hasn't linked a
+      GitHub identity to their Mozilla People profile.
+    - ``bmo_id_mismatch``: a PMO profile was found with a linked GitHub id,
+      but its ``bugzillaMozillaOrgId`` disagrees with the one Phabricator
+      reports for the same user.
+    - ``github_id_invalid``: the ``githubIdV3`` value could not be coerced
+      to an int (should not happen in practice).
+
+    On success, ``reason`` is None.
+    """
 
     username: Optional[str]
     user_id: Optional[int]
+    reason: Optional[str] = None
 
 
 logger = logging.getLogger(__name__)
@@ -174,14 +193,16 @@ class PeopleDirectoryClient:
         graphql_response = self.get_github_id(username)
         github_id = extract_github_id(graphql_response)
         canonical_name = username
+        profile_found = not _profile_not_found(graphql_response)
 
         # The GraphQL profile lookup is case-sensitive *and* people can keep
         # entirely different usernames between Phab and PMO (e.g. `yjuglaret`
         # in Phab vs. `yannis` in PMO). Fall back to the simple search
-        # endpoint and try two matching strategies:
-        #   1. case-insensitive equality on the Phab username, and
-        #   2. BMO-id equality against the expected id from Phab.
-        if not github_id and _profile_not_found(graphql_response):
+        # endpoint and try three matching strategies in order:
+        #   1. case-insensitive equality on the Phab username,
+        #   2. BMO-id equality against the expected id from Phab, and
+        #   3. real-name equality against the Phab realName.
+        if not github_id and not profile_found:
             time.sleep(self.delay)
             search_response = self.search_simple(username)
             resolved = find_username_case_insensitive(search_response, username)
@@ -194,19 +215,32 @@ class PeopleDirectoryClient:
                 time.sleep(self.delay)
                 graphql_response = self.get_github_id(resolved)
                 github_id = extract_github_id(graphql_response)
-                if github_id:
+                if not _profile_not_found(graphql_response):
+                    profile_found = True
                     canonical_name = resolved
 
         if not github_id:
-            logger.debug(f"No GitHub ID found for: {username}")
-            return GitHubResolution(username=None, user_id=None)
+            if profile_found:
+                logger.debug(
+                    f"PMO profile for {username} (PMO={canonical_name}) "
+                    f"has no linked GitHub identity"
+                )
+                return GitHubResolution(
+                    username=None, user_id=None, reason="no_github_linked"
+                )
+            logger.debug(f"No PMO profile found for: {username}")
+            return GitHubResolution(
+                username=None, user_id=None, reason="pmo_profile_not_found"
+            )
 
         # Convert ID string to int
         try:
             github_user_id = int(github_id)
         except ValueError:
             logger.warning(f"Invalid GitHub ID format: {github_id}")
-            return GitHubResolution(username=None, user_id=None)
+            return GitHubResolution(
+                username=None, user_id=None, reason="github_id_invalid"
+            )
 
         # Optional BMO id cross-check. Ensures the PMO profile we resolved
         # actually belongs to the Phabricator user we started from — catches
@@ -229,7 +263,9 @@ class PeopleDirectoryClient:
                     f"BMO id mismatch for {username} (PMO={canonical_name}): "
                     f"phabricator={expected_bmo_id!r} pmo={actual_bmo_id!r}"
                 )
-                return GitHubResolution(username=None, user_id=None)
+                return GitHubResolution(
+                    username=None, user_id=None, reason="bmo_id_mismatch"
+                )
 
         # Rate limit between API calls
         time.sleep(self.delay)

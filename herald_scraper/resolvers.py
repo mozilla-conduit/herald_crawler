@@ -376,8 +376,10 @@ class UsernameResolver:
                 )
                 return github_user
             else:
-                self._unresolved[lookup_name] = "no_github_linked_or_not_found"
-                logger.debug(f"Could not resolve: {lookup_name}")
+                self._unresolved[lookup_name] = resolution.reason or "unresolved"
+                logger.debug(
+                    f"Could not resolve {lookup_name}: {resolution.reason or 'unresolved'}"
+                )
                 return None
 
         except Exception as e:

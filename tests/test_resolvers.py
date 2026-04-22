@@ -480,13 +480,24 @@ class TestUsernameResolver:
         from herald_scraper.people_client import GitHubResolution
 
         mock_people_client.resolve_github.return_value = GitHubResolution(
-            username=None, user_id=None
+            username=None, user_id=None, reason="pmo_profile_not_found"
         )
 
         github_user = resolver.resolve_username("unknown@mozilla.com")
 
         assert github_user is None
-        assert "unknown" in resolver._unresolved
+        assert resolver._unresolved["unknown"] == "pmo_profile_not_found"
+
+    def test_resolve_username_no_github_linked(self, resolver, mock_people_client):
+        """Distinct reason when PMO profile exists but has no GitHub."""
+        from herald_scraper.people_client import GitHubResolution
+
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username=None, user_id=None, reason="no_github_linked"
+        )
+
+        assert resolver.resolve_username("tobyp@mozilla.com") is None
+        assert resolver._unresolved["tobyp"] == "no_github_linked"
 
     def test_resolve_username_caching(self, resolver, mock_people_client):
         """Test that resolved usernames are cached."""
