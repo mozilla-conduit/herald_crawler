@@ -17,3 +17,4 @@ anon.*.map
 # Anonymization files (contain PII mappings - DO NOT COMMIT)
 anonymization_mapping.json
 git_filter_expressions.txt
+herald_rules*.json

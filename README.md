@@ -32,14 +32,17 @@ pip install -e .
 ```bash
 herald-scraper \
   --url https://phabricator.services.mozilla.com \
-  --output rules.json \
-  --conduit-token CONDUIT_API_TOKEN \
+  --conduit-token $CONDUIT_API_TOKEN \
+  --pmo-cookie $PMO_COOKIE \
   [--max-pages P] \
   [--max-groups G] \
   [--max-rules R] \
+  --output herald_rules.$(date -Iseconds).json
 ```
 
-Get `CONDUIT_API_TOKEN` from https://phabricator.services.mozilla.com/settings/user/YOUR_USERNAME/page/apitokens/
+Get `$CONDUIT_API_TOKEN` from https://phabricator.services.mozilla.com/settings/user/YOUR_USERNAME/page/apitokens/
+
+Get `$PMO_COOKIE` from by logging in to https://people.mozilla.org/ and getting the value of the `pmo-access` cookie.
 
 ## Development
 

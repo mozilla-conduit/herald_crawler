@@ -268,3 +268,44 @@ class ConduitClient:
 
         logger.debug(f"user_search returned {len(all_results)} users")
         return all_results
+
+    def bugzilla_account_search(
+        self,
+        ids: Optional[List[str]] = None,
+        phids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Look up Bugzilla accounts linked to Phabricator users.
+
+        Unlike most Conduit methods, this one accepts ``ids`` and ``phids``
+        as top-level list parameters (not inside a ``constraints`` object)
+        and returns a flat list rather than a paginated ``data`` envelope.
+
+        Args:
+            ids: Bugzilla account ids (numeric strings)
+            phids: Phabricator user PHIDs
+
+        Returns:
+            List of ``{"id": <bugzilla-id>, "phid": <phab-phid>}`` dicts.
+            Empty if the user has no Bugzilla account linked.
+
+        Raises:
+            ConduitError: If the API returns an error
+            ValueError: If neither ids nor phids is provided
+        """
+        if not ids and not phids:
+            raise ValueError("Either ids or phids must be provided")
+
+        params: Dict[str, Any] = {}
+        if ids:
+            params["ids"] = ids
+        if phids:
+            params["phids"] = phids
+
+        # Endpoint returns `{"result": [...]}` (a flat list), not the
+        # standard `{"result": {"data": [...]}}` envelope that call_method
+        # is typed for. Cast through Any so mypy permits the runtime shape.
+        raw: Any = self.call_method("bugzilla.account.search", params)
+        if isinstance(raw, list):
+            return list(raw)
+        return []

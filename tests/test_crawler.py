@@ -12,6 +12,7 @@ from herald_scraper.crawler import (
     _sort_rule_ids,
     _deduplicate_rule_ids,
     load_existing_output,
+    load_manual_github_mapping,
     atomic_write_json,
 )
 from herald_scraper.models import (
@@ -486,6 +487,66 @@ class TestLoadExistingOutput:
 
         result = load_existing_output(file_path)
         assert result is None
+
+
+class TestLoadManualGithubMapping:
+    """Tests for load_manual_github_mapping."""
+
+    def _write(self, tmp_path: Path, payload) -> Path:
+        p = tmp_path / "mapping.json"
+        p.write_text(json.dumps(payload))
+        return p
+
+    def test_object_form_with_username_and_user_id(self, tmp_path: Path) -> None:
+        mapping = load_manual_github_mapping(
+            self._write(tmp_path, {"alice": {"username": "alice-gh", "user_id": 42}})
+        )
+        assert mapping["alice"].username == "alice-gh"
+        assert mapping["alice"].user_id == 42
+
+    def test_string_shorthand(self, tmp_path: Path) -> None:
+        mapping = load_manual_github_mapping(
+            self._write(tmp_path, {"bob": "bob-gh"})
+        )
+        assert mapping["bob"].username == "bob-gh"
+        assert mapping["bob"].user_id is None
+
+    def test_user_id_only(self, tmp_path: Path) -> None:
+        mapping = load_manual_github_mapping(
+            self._write(tmp_path, {"carol": {"user_id": 7}})
+        )
+        assert mapping["carol"].username is None
+        assert mapping["carol"].user_id == 7
+
+    def test_mixed_entries(self, tmp_path: Path) -> None:
+        mapping = load_manual_github_mapping(
+            self._write(
+                tmp_path,
+                {
+                    "alice": {"username": "alice-gh", "user_id": 42},
+                    "bob": "bob-gh",
+                },
+            )
+        )
+        assert set(mapping) == {"alice", "bob"}
+
+    def test_rejects_non_object_root(self, tmp_path: Path) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="must be a JSON object"):
+            load_manual_github_mapping(self._write(tmp_path, ["alice"]))
+
+    def test_rejects_entry_without_any_identifier(self, tmp_path: Path) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="needs at least one"):
+            load_manual_github_mapping(self._write(tmp_path, {"alice": {}}))
+
+    def test_rejects_unknown_entry_type(self, tmp_path: Path) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="must be a string or object"):
+            load_manual_github_mapping(self._write(tmp_path, {"alice": 42}))
 
 
 class TestAtomicWriteJson:

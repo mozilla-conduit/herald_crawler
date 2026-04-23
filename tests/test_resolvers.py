@@ -471,20 +471,33 @@ class TestUsernameResolver:
         assert github_user is not None
         assert github_user.username == "alice-gh"
         assert github_user.user_id == 12345
-        mock_people_client.resolve_github.assert_called_once_with("alice")
+        mock_people_client.resolve_github.assert_called_once_with(
+            "alice", expected_bmo_id=None, expected_real_name=None
+        )
 
     def test_resolve_username_not_found(self, resolver, mock_people_client):
         """Test resolving a username that doesn't exist."""
         from herald_scraper.people_client import GitHubResolution
 
         mock_people_client.resolve_github.return_value = GitHubResolution(
-            username=None, user_id=None
+            username=None, user_id=None, reason="pmo_profile_not_found"
         )
 
         github_user = resolver.resolve_username("unknown@mozilla.com")
 
         assert github_user is None
-        assert "unknown" in resolver._unresolved
+        assert resolver._unresolved["unknown"] == "pmo_profile_not_found"
+
+    def test_resolve_username_no_github_linked(self, resolver, mock_people_client):
+        """Distinct reason when PMO profile exists but has no GitHub."""
+        from herald_scraper.people_client import GitHubResolution
+
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username=None, user_id=None, reason="no_github_linked"
+        )
+
+        assert resolver.resolve_username("tobyp@mozilla.com") is None
+        assert resolver._unresolved["tobyp"] == "no_github_linked"
 
     def test_resolve_username_caching(self, resolver, mock_people_client):
         """Test that resolved usernames are cached."""
@@ -518,7 +531,7 @@ class TestUsernameResolver:
         """Test resolving all usernames from rules and groups."""
         from herald_scraper.people_client import GitHubResolution
 
-        def mock_resolve(username):
+        def mock_resolve(username, expected_bmo_id=None, expected_real_name=None):
             return GitHubResolution(username=f"{username}-gh", user_id=hash(username) % 100000)
 
         mock_people_client.resolve_github.side_effect = mock_resolve
@@ -540,7 +553,7 @@ class TestUsernameResolver:
         """Test resolving usernames with some failures."""
         from herald_scraper.people_client import GitHubResolution
 
-        def mock_resolve(username):
+        def mock_resolve(username, expected_bmo_id=None, expected_real_name=None):
             if username == "alice":
                 return GitHubResolution(username="alice-gh", user_id=12345)
             return GitHubResolution(username=None, user_id=None)
@@ -587,7 +600,7 @@ class TestUsernameResolver:
             ),
         ]
 
-        def mock_resolve(username):
+        def mock_resolve(username, expected_bmo_id=None, expected_real_name=None):
             return GitHubResolution(username=f"{username}-gh", user_id=hash(username) % 100000)
 
         mock_people_client.resolve_github.side_effect = mock_resolve
@@ -626,3 +639,199 @@ class TestUsernameResolver:
         # Should call client again
         resolver.resolve_username("alice@mozilla.com")
         assert mock_people_client.resolve_github.call_count == 2
+
+
+class TestUsernameResolverBMOVerification:
+    """Tests for UsernameResolver's Conduit-backed BMO id verification."""
+
+    @pytest.fixture
+    def mock_people_client(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_conduit_client(self):
+        return MagicMock()
+
+    def _setup_conduit_happy_path(
+        self,
+        conduit: MagicMock,
+        *,
+        phid: str = "PHID-USER-x",
+        bmo_id: str = "99999999",
+        real_name: str = "Alice Example",
+    ) -> None:
+        conduit.user_search.return_value = [
+            {"phid": phid, "fields": {"username": "alice", "realName": real_name}}
+        ]
+        conduit.bugzilla_account_search.return_value = [{"id": bmo_id, "phid": phid}]
+
+    def test_passes_phab_info_to_people_client(
+        self, mock_people_client, mock_conduit_client
+    ):
+        from herald_scraper.people_client import GitHubResolution
+
+        self._setup_conduit_happy_path(
+            mock_conduit_client, bmo_id="99999999", real_name="Alice Example"
+        )
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=42
+        )
+
+        resolver = UsernameResolver(mock_people_client, conduit_client=mock_conduit_client)
+        user = resolver.resolve_username("alice")
+
+        assert user is not None
+        mock_people_client.resolve_github.assert_called_once_with(
+            "alice",
+            expected_bmo_id="99999999",
+            expected_real_name="Alice Example",
+        )
+        mock_conduit_client.user_search.assert_called_once_with(usernames=["alice"])
+        mock_conduit_client.bugzilla_account_search.assert_called_once_with(
+            phids=["PHID-USER-x"]
+        )
+
+    def test_no_conduit_client_skips_verification(self, mock_people_client):
+        from herald_scraper.people_client import GitHubResolution
+
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=42
+        )
+
+        resolver = UsernameResolver(mock_people_client, conduit_client=None)
+        resolver.resolve_username("alice")
+
+        mock_people_client.resolve_github.assert_called_once_with(
+            "alice", expected_bmo_id=None, expected_real_name=None
+        )
+
+    def test_user_not_in_phab_leaves_everything_none(
+        self, mock_people_client, mock_conduit_client
+    ):
+        """Missing Phab user means no BMO id / real name to verify against."""
+        from herald_scraper.people_client import GitHubResolution
+
+        mock_conduit_client.user_search.return_value = []
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=42
+        )
+
+        resolver = UsernameResolver(mock_people_client, conduit_client=mock_conduit_client)
+        resolver.resolve_username("alice")
+
+        mock_people_client.resolve_github.assert_called_once_with(
+            "alice", expected_bmo_id=None, expected_real_name=None
+        )
+        mock_conduit_client.bugzilla_account_search.assert_not_called()
+
+    def test_no_bmo_account_linked_still_passes_real_name(
+        self, mock_people_client, mock_conduit_client
+    ):
+        """Phab user exists without a linked BMO account: real name still flows."""
+        from herald_scraper.people_client import GitHubResolution
+
+        mock_conduit_client.user_search.return_value = [
+            {"phid": "PHID-USER-x", "fields": {"username": "alice", "realName": "Alice"}}
+        ]
+        mock_conduit_client.bugzilla_account_search.return_value = []
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=42
+        )
+
+        resolver = UsernameResolver(mock_people_client, conduit_client=mock_conduit_client)
+        resolver.resolve_username("alice")
+
+        mock_people_client.resolve_github.assert_called_once_with(
+            "alice", expected_bmo_id=None, expected_real_name="Alice"
+        )
+
+    def test_conduit_error_is_swallowed(self, mock_people_client, mock_conduit_client):
+        """A Phab lookup failure must not derail the PMO resolution path."""
+        from herald_scraper.people_client import GitHubResolution
+
+        mock_conduit_client.user_search.side_effect = RuntimeError("phab down")
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=42
+        )
+
+        resolver = UsernameResolver(mock_people_client, conduit_client=mock_conduit_client)
+        user = resolver.resolve_username("alice")
+
+        assert user is not None
+        mock_people_client.resolve_github.assert_called_once_with(
+            "alice", expected_bmo_id=None, expected_real_name=None
+        )
+
+    def test_manual_mapping_wins_over_api(self, mock_people_client, mock_conduit_client):
+        """Operator overrides bypass all API calls and take precedence."""
+        from herald_scraper.models import GitHubUser
+
+        override = {"alice": GitHubUser(username="alice-manual", user_id=9999)}
+        resolver = UsernameResolver(
+            mock_people_client,
+            conduit_client=mock_conduit_client,
+            manual_mapping=override,
+        )
+
+        user = resolver.resolve_username("alice@mozilla.com")
+
+        assert user is not None
+        assert user.username == "alice-manual"
+        assert user.user_id == 9999
+        # No API calls made — neither Phab nor PMO.
+        mock_people_client.resolve_github.assert_not_called()
+        mock_conduit_client.user_search.assert_not_called()
+        # Entry persists in the resolution cache so repeat lookups are free.
+        assert resolver._cache["alice"].username == "alice-manual"
+
+    def test_manual_mapping_username_only(self, mock_people_client):
+        """Entry with no user_id still wins; user_id is None on the result."""
+        from herald_scraper.models import GitHubUser
+
+        override = {"tobyp": GitHubUser(username="toby-on-github")}
+        resolver = UsernameResolver(mock_people_client, manual_mapping=override)
+
+        user = resolver.resolve_username("tobyp")
+
+        assert user is not None
+        assert user.username == "toby-on-github"
+        assert user.user_id is None
+        mock_people_client.resolve_github.assert_not_called()
+
+    def test_manual_mapping_missing_user_falls_through(self, mock_people_client):
+        """Users not in the mapping go through the normal resolution path."""
+        from herald_scraper.models import GitHubUser
+        from herald_scraper.people_client import GitHubResolution
+
+        override = {"alice": GitHubUser(username="alice-manual")}
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="bob-gh", user_id=42
+        )
+        resolver = UsernameResolver(mock_people_client, manual_mapping=override)
+
+        user = resolver.resolve_username("bob")
+
+        assert user is not None
+        assert user.username == "bob-gh"
+        assert user.user_id == 42
+        mock_people_client.resolve_github.assert_called_once_with(
+            "bob", expected_bmo_id=None, expected_real_name=None
+        )
+
+    def test_phab_bmo_id_cached_per_lookup(self, mock_people_client, mock_conduit_client):
+        """Repeat resolutions for the same user must not re-query Phab."""
+        from herald_scraper.people_client import GitHubResolution
+
+        self._setup_conduit_happy_path(mock_conduit_client)
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=42
+        )
+
+        resolver = UsernameResolver(mock_people_client, conduit_client=mock_conduit_client)
+        # First call goes through the full flow and populates both caches.
+        resolver.resolve_username("alice")
+        # Second call hits the resolution cache — Phab must not be touched again.
+        resolver.resolve_username("alice")
+
+        assert mock_conduit_client.user_search.call_count == 1
+        assert mock_conduit_client.bugzilla_account_search.call_count == 1
