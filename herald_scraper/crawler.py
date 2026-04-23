@@ -103,6 +103,53 @@ def load_existing_output(file_path: Union[str, Path]) -> Optional[HeraldRulesOut
         return None
 
 
+def load_manual_github_mapping(file_path: Union[str, Path]) -> Dict[str, GitHubUser]:
+    """Load a ``phab_username -> GitHubUser`` override map from JSON.
+
+    File format::
+
+        {
+          "phabuser1": {"username": "ghuser1", "user_id": 12345},
+          "phabuser2": {"username": "ghuser2"},
+          "phabuser3": "ghuser3"
+        }
+
+    Scalar string values are accepted as a shorthand for
+    ``{"username": <value>}``. ``user_id`` is optional and may be null.
+
+    Raises:
+        ValueError: If the file isn't a JSON object, or any entry is
+            neither a string nor an object with ``username`` or ``user_id``.
+    """
+    with open(file_path) as f:
+        raw = json.load(f)
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Manual GitHub mapping at {file_path} must be a JSON object, "
+            f"got {type(raw).__name__}"
+        )
+
+    mapping: Dict[str, GitHubUser] = {}
+    for phab_user, entry in raw.items():
+        if isinstance(entry, str):
+            mapping[phab_user] = GitHubUser(username=entry)
+            continue
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"Manual mapping entry for {phab_user!r} must be a string or object, "
+                f"got {type(entry).__name__}"
+            )
+        gh_username = entry.get("username")
+        gh_user_id = entry.get("user_id")
+        if not gh_username and gh_user_id is None:
+            raise ValueError(
+                f"Manual mapping entry for {phab_user!r} needs at least one of "
+                f"'username' or 'user_id'"
+            )
+        mapping[phab_user] = GitHubUser(username=gh_username, user_id=gh_user_id)
+    return mapping
+
+
 def atomic_write_json(file_path: Union[str, Path], output: HeraldRulesOutput) -> None:
     """
     Write output to JSON file atomically.
@@ -171,6 +218,7 @@ class HeraldCrawler:
         max_users: Optional[int] = None,
         existing_output: Optional[HeraldRulesOutput] = None,
         conduit_client: Optional[ConduitClient] = None,
+        manual_github_mapping: Optional[Dict[str, GitHubUser]] = None,
     ) -> HeraldRulesOutput:
         """
         Extract all Herald rules and return complete output.
@@ -272,7 +320,11 @@ class HeraldCrawler:
 
         if people_client and rules:
             logger.info("Resolving GitHub usernames for users")
-            username_resolver = UsernameResolver(people_client, conduit_client=conduit_client)
+            username_resolver = UsernameResolver(
+                people_client,
+                conduit_client=conduit_client,
+                manual_mapping=manual_github_mapping,
+            )
 
             # Pre-populate cache with existing data
             for username, gh_user in existing_github_users.items():

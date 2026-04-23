@@ -762,6 +762,62 @@ class TestUsernameResolverBMOVerification:
             "alice", expected_bmo_id=None, expected_real_name=None
         )
 
+    def test_manual_mapping_wins_over_api(self, mock_people_client, mock_conduit_client):
+        """Operator overrides bypass all API calls and take precedence."""
+        from herald_scraper.models import GitHubUser
+
+        override = {"alice": GitHubUser(username="alice-manual", user_id=9999)}
+        resolver = UsernameResolver(
+            mock_people_client,
+            conduit_client=mock_conduit_client,
+            manual_mapping=override,
+        )
+
+        user = resolver.resolve_username("alice@mozilla.com")
+
+        assert user is not None
+        assert user.username == "alice-manual"
+        assert user.user_id == 9999
+        # No API calls made — neither Phab nor PMO.
+        mock_people_client.resolve_github.assert_not_called()
+        mock_conduit_client.user_search.assert_not_called()
+        # Entry persists in the resolution cache so repeat lookups are free.
+        assert resolver._cache["alice"].username == "alice-manual"
+
+    def test_manual_mapping_username_only(self, mock_people_client):
+        """Entry with no user_id still wins; user_id is None on the result."""
+        from herald_scraper.models import GitHubUser
+
+        override = {"tobyp": GitHubUser(username="toby-on-github")}
+        resolver = UsernameResolver(mock_people_client, manual_mapping=override)
+
+        user = resolver.resolve_username("tobyp")
+
+        assert user is not None
+        assert user.username == "toby-on-github"
+        assert user.user_id is None
+        mock_people_client.resolve_github.assert_not_called()
+
+    def test_manual_mapping_missing_user_falls_through(self, mock_people_client):
+        """Users not in the mapping go through the normal resolution path."""
+        from herald_scraper.models import GitHubUser
+        from herald_scraper.people_client import GitHubResolution
+
+        override = {"alice": GitHubUser(username="alice-manual")}
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="bob-gh", user_id=42
+        )
+        resolver = UsernameResolver(mock_people_client, manual_mapping=override)
+
+        user = resolver.resolve_username("bob")
+
+        assert user is not None
+        assert user.username == "bob-gh"
+        assert user.user_id == 42
+        mock_people_client.resolve_github.assert_called_once_with(
+            "bob", expected_bmo_id=None, expected_real_name=None
+        )
+
     def test_phab_bmo_id_cached_per_lookup(self, mock_people_client, mock_conduit_client):
         """Repeat resolutions for the same user must not re-query Phab."""
         from herald_scraper.people_client import GitHubResolution

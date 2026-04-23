@@ -210,6 +210,7 @@ class UsernameResolver:
         self,
         client: PeopleDirectoryClient,
         conduit_client: Optional[ConduitClient] = None,
+        manual_mapping: Optional[Dict[str, GitHubUser]] = None,
     ) -> None:
         """
         Initialize the UsernameResolver.
@@ -220,9 +221,15 @@ class UsernameResolver:
                 resolution cross-checks the PMO profile's
                 ``bugzillaMozillaOrgId`` against Phabricator's
                 ``bugzilla.account.search`` result for the same user.
+            manual_mapping: Optional operator-supplied Phab username ->
+                GitHubUser override. Entries bypass all API calls and win
+                over automatic resolution. Keys are matched case-sensitively
+                against the Phab username (after stripping ``@domain`` like
+                other paths).
         """
         self.client = client
         self.conduit_client = conduit_client
+        self.manual_mapping = manual_mapping or {}
         self._cache: Dict[str, GitHubUser] = {}
         self._unresolved: Dict[str, str] = {}  # username -> reason
         # username -> (bmo_id, real_name); either value may be None
@@ -349,6 +356,18 @@ class UsernameResolver:
         """
         # Extract just the username part if it's an email
         lookup_name = username.split("@")[0] if "@" in username else username
+
+        # Operator-supplied overrides take precedence over everything,
+        # including the auto-resolution cache — they're the escape hatch
+        # for users the automatic path can't resolve correctly.
+        if lookup_name in self.manual_mapping:
+            override = self.manual_mapping[lookup_name]
+            self._cache[lookup_name] = override
+            logger.info(
+                f"Manual mapping: {lookup_name} -> {override.username} "
+                f"(ID: {override.user_id})"
+            )
+            return override
 
         # Check cache first
         if lookup_name in self._cache:

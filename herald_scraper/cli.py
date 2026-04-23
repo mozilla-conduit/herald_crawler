@@ -9,7 +9,12 @@ import requests
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.conduit_client import ConduitClient
-from herald_scraper.crawler import HeraldCrawler, atomic_write_json, load_existing_output
+from herald_scraper.crawler import (
+    HeraldCrawler,
+    atomic_write_json,
+    load_existing_output,
+    load_manual_github_mapping,
+)
 from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.people_client import PeopleDirectoryClient
 
@@ -140,6 +145,12 @@ def main() -> int:
         type=int,
         help="Maximum number of users to resolve GitHub usernames for",
     )
+    parser.add_argument(
+        "--github-user-mapping",
+        help="Path to a JSON file of Phabricator -> GitHub username overrides. "
+        "Entries bypass API resolution and win over the automatic path. "
+        "See crawler.load_manual_github_mapping for the accepted format.",
+    )
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -214,6 +225,14 @@ def main() -> int:
                     "Set PEOPLE_MOZILLA_COOKIE env var or use --pmo-cookie"
                 )
 
+        manual_github_mapping = None
+        if args.github_user_mapping:
+            manual_github_mapping = load_manual_github_mapping(args.github_user_mapping)
+            logger.info(
+                f"Loaded {len(manual_github_mapping)} manual GitHub overrides "
+                f"from {args.github_user_mapping}"
+            )
+
         logger.info("Starting Herald rules extraction...")
         output = crawler.extract_all_rules(
             global_only=not args.all_rules,
@@ -224,6 +243,7 @@ def main() -> int:
             max_users=args.max_users,
             existing_output=existing_output,
             conduit_client=conduit_client,
+            manual_github_mapping=manual_github_mapping,
         )
 
         if args.output:
