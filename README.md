@@ -18,19 +18,13 @@ This tool extracts Herald rules from a Phabricator instance (specifically https:
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt
-
-# For development
-pip install -r requirements-dev.txt
-
-# Or install as a package
-pip install -e .
+$ uv sync
 ```
 
 ## Usage
 
 ```bash
-herald-scraper \
+$ uv run herald-scraper \
   --url https://phabricator.services.mozilla.com \
   --phab-cookie $PHABRICATOR_SESSION_COOKIE \
   --conduit-token $CONDUIT_API_TOKEN \
@@ -53,26 +47,25 @@ Get `$PMO_COOKIE` from by logging in to https://people.mozilla.org/ and getting 
 
 ```bash
 # Install package with dev dependencies
-pip install -e ".[dev]"
+$ uv sync --group dev
 ```
 
 ### Running Tests
 
 ```bash
-pytest
+$ uv run pytest
 ```
 
 ### Code Formatting
 
 ```bash
-black herald_scraper tests
-ruff check herald_scraper tests
+$ uv run ruff check herald_scraper tests
 ```
 
 ### Type Checking
 
 ```bash
-mypy herald_scraper
+$ uv run mypy herald_scraper
 ```
 
 ## Data Model
