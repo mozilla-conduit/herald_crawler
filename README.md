@@ -32,6 +32,7 @@ pip install -e .
 ```bash
 herald-scraper \
   --url https://phabricator.services.mozilla.com \
+  --phab-cookie $PHABRICATOR_SESSION_COOKIE \
   --conduit-token $CONDUIT_API_TOKEN \
   --pmo-cookie $PMO_COOKIE \
   [--max-pages P] \
@@ -41,6 +42,8 @@ herald-scraper \
 ```
 
 Get `$CONDUIT_API_TOKEN` from https://phabricator.services.mozilla.com/settings/user/YOUR_USERNAME/page/apitokens/
+
+Get `$PHABRICATOR_SESSION_COOKIE` from the same page and getting the value of the `phsid` cookie.
 
 Get `$PMO_COOKIE` from by logging in to https://people.mozilla.org/ and getting the value of the `pmo-access` cookie.
 
