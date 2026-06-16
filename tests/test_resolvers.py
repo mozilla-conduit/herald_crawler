@@ -6,9 +6,40 @@ from unittest.mock import MagicMock
 import pytest
 
 from herald_scraper.models import Action, Group, Reviewer, Rule
-from herald_scraper.resolvers import GroupCollector, UsernameResolver
+from herald_scraper.resolvers import (
+    GroupCollector,
+    UsernameResolver,
+    _clean_phab_real_name,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+class TestCleanPhabRealName:
+    """Tests for the Phab realName cleaner."""
+
+    def test_passes_through_clean_name(self):
+        assert _clean_phab_real_name("Aaa Bbb") == "Aaa Bbb"
+
+    def test_strips_trailing_irc_nick_suffix(self):
+        assert _clean_phab_real_name("Aaa Bbb [:nick]") == "Aaa Bbb"
+
+    def test_strips_irc_nick_with_no_leading_space(self):
+        assert _clean_phab_real_name("Aaa Bbb[:nick]") == "Aaa Bbb"
+
+    def test_strips_inline_irc_nick(self):
+        assert _clean_phab_real_name("Aaa [:nick] Bbb") == "Aaa Bbb"
+
+    def test_collapses_extra_whitespace_after_strip(self):
+        assert _clean_phab_real_name("Aaa   Bbb [:nick]") == "Aaa Bbb"
+
+    def test_returns_none_for_empty_after_strip(self):
+        assert _clean_phab_real_name("[:nick]") is None
+        assert _clean_phab_real_name("   [:nick]   ") is None
+
+    def test_returns_none_for_empty_input(self):
+        assert _clean_phab_real_name("") is None
+        assert _clean_phab_real_name("   ") is None
 
 
 class TestGroupCollector:
@@ -816,6 +847,30 @@ class TestUsernameResolverBMOVerification:
         assert user.user_id == 42
         mock_people_client.resolve_github.assert_called_once_with(
             "bob", expected_bmo_id=None, expected_real_name=None
+        )
+
+    def test_real_name_irc_nick_suffix_stripped_before_passing(
+        self, mock_people_client, mock_conduit_client
+    ):
+        """Phab's "[:nick]" annotation in realName is stripped before reaching PMO."""
+        from herald_scraper.people_client import GitHubResolution
+
+        mock_conduit_client.user_search.return_value = [
+            {
+                "phid": "PHID-USER-x",
+                "fields": {"username": "alice", "realName": "Aaa Bbb [:alias]"},
+            }
+        ]
+        mock_conduit_client.bugzilla_account_search.return_value = []
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=42
+        )
+
+        resolver = UsernameResolver(mock_people_client, conduit_client=mock_conduit_client)
+        resolver.resolve_username("alice")
+
+        mock_people_client.resolve_github.assert_called_once_with(
+            "alice", expected_bmo_id=None, expected_real_name="Aaa Bbb"
         )
 
     def test_phab_bmo_id_cached_per_lookup(self, mock_people_client, mock_conduit_client):

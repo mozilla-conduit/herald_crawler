@@ -190,6 +190,12 @@ class PeopleDirectoryClient:
         Returns:
             GitHubResolution with username and user_id (either may be None)
         """
+        logger.debug(
+            f"resolve_github: username={username!r} "
+            f"expected_bmo_id={expected_bmo_id!r} "
+            f"expected_real_name={expected_real_name!r}"
+        )
+
         # Step 1: Get GitHub ID
         graphql_response = self.get_github_id(username)
         github_id = extract_github_id(graphql_response)
@@ -531,7 +537,8 @@ def find_username_by_real_name(response: dict, real_name: str) -> Optional[str]:
     target = _fold_name(real_name)
     if not target:
         return None
-    for dino in response.get("dinos") or []:
+    dinos = response.get("dinos") or []
+    for dino in dinos:
         candidate = dino.get("username")
         first = (dino.get("firstName") or "").strip()
         last = (dino.get("lastName") or "").strip()
@@ -540,6 +547,22 @@ def find_username_by_real_name(response: dict, real_name: str) -> Optional[str]:
         full = _fold_name(f"{first} {last}")
         if full == target:
             return str(candidate)
+
+    # Phab realName is sometimes a bare first name (no surname) while PMO
+    # carries the full first+last. Fall back to a firstName-only fold-match,
+    # but require it to be unique in the response so we don't silently pick
+    # one of several people who share a first name.
+    if " " not in target:
+        first_matches = []
+        for dino in dinos:
+            candidate = dino.get("username")
+            first = (dino.get("firstName") or "").strip()
+            if not candidate or not first:
+                continue
+            if _fold_name(first) == target:
+                first_matches.append(str(candidate))
+        if len(first_matches) == 1:
+            return first_matches[0]
     return None
 
 

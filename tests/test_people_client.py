@@ -574,6 +574,56 @@ class TestFindUsernameByRealName:
         }
         assert find_username_by_real_name(response, "Tést Üser") == "tuser"
 
+    def test_firstname_only_match_when_target_is_single_token(self):
+        """Single-token Phab realName matches a unique dino firstName."""
+        response = {
+            "dinos": [
+                {"username": "aaab", "firstName": "Aaa", "lastName": "Bbb"},
+                {"username": "ccc", "firstName": "Ccc", "lastName": "Ddd"},
+            ]
+        }
+        assert find_username_by_real_name(response, "Aaa") == "aaab"
+
+    def test_firstname_only_match_with_accent_folding(self):
+        """Single-token target folds against accented firstName."""
+        response = {
+            "dinos": [
+                {"username": "tuser", "firstName": "Tést", "lastName": "Üser"},
+            ]
+        }
+        assert find_username_by_real_name(response, "Test") == "tuser"
+
+    def test_firstname_only_ambiguous_returns_none(self):
+        """Multiple dinos share the firstName: don't guess, return None."""
+        response = {
+            "dinos": [
+                {"username": "aaab", "firstName": "Aaa", "lastName": "Bbb"},
+                {"username": "aaac", "firstName": "Aaa", "lastName": "Ccc"},
+            ]
+        }
+        assert find_username_by_real_name(response, "Aaa") is None
+
+    def test_firstname_only_not_attempted_for_multi_token_target(self):
+        """A two-token target whose full-name match fails must NOT fall back to
+        first-only matching — that would silently pick the wrong person."""
+        response = {
+            "dinos": [
+                {"username": "aaab", "firstName": "Aaa", "lastName": "Bbb"},
+            ]
+        }
+        assert find_username_by_real_name(response, "Aaa Zzz") is None
+
+    def test_firstname_only_prefers_full_match_when_both_possible(self):
+        """If a full first+last match exists, take it even if a first-only match also would."""
+        response = {
+            "dinos": [
+                {"username": "fullmatch", "firstName": "Aaa", "lastName": "Bbb"},
+            ]
+        }
+        # Target "Aaa Bbb" matches both full ("Aaa Bbb") and is multi-token
+        # so first-only never fires — just check full wins.
+        assert find_username_by_real_name(response, "Aaa Bbb") == "fullmatch"
+
     def test_accent_folding_nfd_vs_nfc(self):
         """Same visible string in different Unicode normalizations still matches."""
         import unicodedata
