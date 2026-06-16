@@ -450,6 +450,35 @@ class TestRuleDetailPageParser:
         assert alice.is_group is False
         assert alice.blocking is True
 
+    def test_parse_action_with_restricted_reviewer(self):
+        """A reviewer the session can't view renders as plain text with no link.
+
+        Phabricator shows policy-restricted objects as "Restricted Project"
+        without a phui-handle link. The reviewer must still be retained (with
+        is_group=None) so the rule is not silently dropped as having no
+        reviewers.
+        """
+        html = """
+        <html>
+        <body>
+        <p class="herald-list-description">Take these actions the first time this rule matches:</p>
+        <div class="herald-list-item">
+            Add blocking reviewers: Restricted Project .
+        </div>
+        </body>
+        </html>
+        """
+        parser = RuleDetailPageParser(html)
+        actions = parser._extract_actions()
+
+        assert len(actions) == 1
+        assert actions[0].type == "add-reviewers"
+        reviewers = actions[0].reviewers
+        assert len(reviewers) == 1
+        assert reviewers[0].target == "Restricted Project"
+        assert reviewers[0].blocking is True
+        assert reviewers[0].is_group is None
+
 
 class TestProjectPageParser:
     """Tests for ProjectPageParser."""

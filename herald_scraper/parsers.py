@@ -472,6 +472,35 @@ class RuleDetailPageParser:
         # Generic fallback - log unknown condition types
         return Condition(type="unknown", operator="unknown", value=text)
 
+    def _extract_reviewers(
+        self, item: Tag, text: str, prefix: str, blocking: bool
+    ) -> List[Reviewer]:
+        """Extract reviewers from an "Add reviewers" action item.
+
+        Reviewers are normally rendered as ``phui-handle`` links. When the
+        scraping session lacks permission to view a reviewer (e.g. a
+        policy-restricted project), Phabricator renders it as plain text such
+        as "Restricted Project" with no link. In that case we fall back to the
+        action's text value so the reviewer — and the rule — is still retained
+        (with an unresolvable target) rather than silently dropped.
+        """
+        handle_info = self._extract_handle_info(item)
+        if handle_info:
+            return [
+                Reviewer(target=info.name, blocking=blocking, is_group=info.is_group)
+                for info in handle_info
+            ]
+
+        # No links: recover the plain-text reviewer name(s) after the prefix.
+        value = text.split(prefix, 1)[1].strip().rstrip(".").strip()
+        if not value:
+            return []
+        return [
+            Reviewer(target=name.strip(), blocking=blocking, is_group=None)
+            for name in value.split(",")
+            if name.strip()
+        ]
+
     def _extract_handle_names(self, element: Tag) -> List[str]:
         """Extract names from phui-handle links within an element."""
         return [info.name for info in self._extract_handle_info(element)]
@@ -559,20 +588,12 @@ class RuleDetailPageParser:
 
         # Add blocking reviewers
         if "Add blocking reviewers:" in text:
-            handle_info = self._extract_handle_info(item)
-            reviewers = [
-                Reviewer(target=info.name, blocking=True, is_group=info.is_group)
-                for info in handle_info
-            ]
+            reviewers = self._extract_reviewers(item, text, "Add blocking reviewers:", blocking=True)
             return Action(type="add-reviewers", reviewers=reviewers)
 
         # Add (non-blocking) reviewers
         if text.startswith("Add reviewers:") and "blocking" not in text.lower():
-            handle_info = self._extract_handle_info(item)
-            reviewers = [
-                Reviewer(target=info.name, blocking=False, is_group=info.is_group)
-                for info in handle_info
-            ]
+            reviewers = self._extract_reviewers(item, text, "Add reviewers:", blocking=False)
             return Action(type="add-reviewers", reviewers=reviewers)
 
         # Add subscribers

@@ -53,8 +53,9 @@ def main() -> int:
         help="Phabricator instance URL (or set PHABRICATOR_URL env var)",
     )
     parser.add_argument(
-        "--cookie",
-        help="Session cookie for authentication (or set PHABRICATOR_SESSION_COOKIE env var)",
+        "--phab-cookie",
+        help="Phabricator session cookie for authenticating HTML scraping "
+        "(or set PHABRICATOR_SESSION_COOKIE env var)",
     )
     parser.add_argument(
         "--output",
@@ -166,7 +167,7 @@ def main() -> int:
         if args.url:
             client = HeraldClient(
                 base_url=args.url,
-                session_cookie=args.cookie,
+                session_cookie=args.phab_cookie,
                 delay=args.delay,
                 timeout=args.timeout,
             )
