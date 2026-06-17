@@ -203,6 +203,22 @@ class GroupCollector:
         logger.debug("Group cache cleared")
 
 
+_IRC_NICK_SUFFIX_RE = re.compile(r"\s*\[:[^\]]*\]\s*")
+
+
+def _clean_phab_real_name(raw: str) -> Optional[str]:
+    """Strip Phab's ``[:irc-nick]`` annotation from a realName.
+
+    Phab convention is to embed an IRC handle in brackets within the
+    realName field (e.g. ``"Aaa Bbb [:nick]"``). The bracket portion is
+    metadata, not part of the name — it breaks PMO's search and our
+    exact ``first + " " + last`` fold-match.
+    """
+    cleaned = _IRC_NICK_SUFFIX_RE.sub(" ", raw)
+    cleaned = " ".join(cleaned.split()).strip()
+    return cleaned or None
+
+
 class UsernameResolver:
     """Resolves Phabricator usernames to GitHub usernames and user IDs."""
 
@@ -330,7 +346,7 @@ class UsernameResolver:
                 phid = first.get("phid")
                 raw_name = first.get("fields", {}).get("realName")
                 if raw_name:
-                    real_name = str(raw_name).strip() or None
+                    real_name = _clean_phab_real_name(str(raw_name))
                 if phid:
                     accounts = self.conduit_client.bugzilla_account_search(phids=[phid])
                     if accounts:

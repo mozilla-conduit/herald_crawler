@@ -2,6 +2,7 @@
 
 import logging
 import time
+import unicodedata
 from typing import NamedTuple, Optional
 
 import requests
@@ -189,6 +190,12 @@ class PeopleDirectoryClient:
         Returns:
             GitHubResolution with username and user_id (either may be None)
         """
+        logger.debug(
+            f"resolve_github: username={username!r} "
+            f"expected_bmo_id={expected_bmo_id!r} "
+            f"expected_real_name={expected_real_name!r}"
+        )
+
         # Step 1: Get GitHub ID
         graphql_response = self.get_github_id(username)
         github_id = extract_github_id(graphql_response)
@@ -196,24 +203,30 @@ class PeopleDirectoryClient:
         profile_found = not _profile_not_found(graphql_response)
 
         # The GraphQL profile lookup is case-sensitive *and* people can keep
-        # entirely different usernames between Phab and PMO (e.g. `yjuglaret`
-        # in Phab vs. `yannis` in PMO). Fall back to the simple search
+        # entirely different usernames between Phab and PMO (e.g. `phab_alias`
+        # in Phab vs. `pmo_canonical` in PMO). Fall back to the simple search
         # endpoint and try four matching strategies in order:
         #   1. case-insensitive equality on the Phab username,
         #   2. BMO-id equality against the expected id from Phab,
         #   3. real-name equality against the Phab realName, and
         #   4. email local-part equality with the Phab username (e.g.
-        #      Phab `mpohle` -> PMO dino with primaryEmail mpohle@...).
+        #      Phab `alias_loc` -> PMO dino with primaryEmail alias_loc@...).
+        # If a search by Phab username surfaces nothing useful (e.g. the
+        # nickname `007` returns one unrelated dino), retry the search using
+        # the Phab realName so the same fallbacks can match against a more
+        # relevant result set.
         if not github_id and not profile_found:
             time.sleep(self.delay)
             search_response = self.search_simple(username)
-            resolved = find_username_case_insensitive(search_response, username)
-            if not resolved and expected_bmo_id is not None:
-                resolved = self._find_username_by_bmo_id(search_response, expected_bmo_id)
-            if not resolved and expected_real_name is not None:
-                resolved = find_username_by_real_name(search_response, expected_real_name)
-            if not resolved:
-                resolved = find_username_by_email_local_part(search_response, username)
+            resolved = self._match_search_fallbacks(
+                search_response, username, expected_bmo_id, expected_real_name
+            )
+            if not resolved and expected_real_name:
+                time.sleep(self.delay)
+                search_response = self.search_simple(expected_real_name)
+                resolved = self._match_search_fallbacks(
+                    search_response, username, expected_bmo_id, expected_real_name
+                )
             if resolved and resolved != username:
                 logger.info(f"PMO username fallback: {username} -> {resolved}")
                 time.sleep(self.delay)
@@ -284,6 +297,27 @@ class PeopleDirectoryClient:
             logger.warning(f"Could not resolve GitHub username from ID {github_id}")
 
         return GitHubResolution(username=github_username, user_id=github_user_id)
+
+    def _match_search_fallbacks(
+        self,
+        search_response: dict,
+        phab_username: str,
+        expected_bmo_id: Optional[str],
+        expected_real_name: Optional[str],
+    ) -> Optional[str]:
+        """Run the four matching strategies against one search response.
+
+        Returns the canonical PMO ``primary_username`` of the first matching
+        dino, or ``None`` if nothing in the response matches the Phab user.
+        """
+        resolved = find_username_case_insensitive(search_response, phab_username)
+        if not resolved and expected_bmo_id is not None:
+            resolved = self._find_username_by_bmo_id(search_response, expected_bmo_id)
+        if not resolved and expected_real_name is not None:
+            resolved = find_username_by_real_name(search_response, expected_real_name)
+        if not resolved:
+            resolved = find_username_by_email_local_part(search_response, phab_username)
+        return resolved
 
     def _find_username_by_bmo_id(
         self, search_response: dict, expected_bmo_id: str
@@ -433,21 +467,21 @@ def find_username_by_email_local_part(response: dict, phab_username: str) -> Opt
 
     Handles the common Mozilla pattern where the Phab nickname mirrors
     the mozilla.com email prefix while the PMO ``primary_username`` is
-    something unrelated (e.g. Phab ``mpohle`` / PMO ``m4x`` /
-    ``primaryEmail`` ``mpohle@mozilla.com``).
+    something unrelated (e.g. Phab ``alias_loc`` / PMO ``canon_loc`` /
+    ``primaryEmail`` ``alias_loc@mozilla.com``).
 
     Examples:
         >>> find_username_by_email_local_part(
-        ...     {"dinos": [{"username": "m4x", "primaryEmail": "mpohle@mozilla.com"}]},
-        ...     "mpohle",
+        ...     {"dinos": [{"username": "canon_loc", "primaryEmail": "alias_loc@mozilla.com"}]},
+        ...     "alias_loc",
         ... )
-        'm4x'
+        'canon_loc'
         >>> find_username_by_email_local_part(
-        ...     {"dinos": [{"username": "m4x", "primaryEmail": "mpohle@mozilla.com"}]},
-        ...     "MPOHLE",
+        ...     {"dinos": [{"username": "canon_loc", "primaryEmail": "alias_loc@mozilla.com"}]},
+        ...     "ALIAS_LOC",
         ... )
-        'm4x'
-        >>> find_username_by_email_local_part({"dinos": []}, "mpohle")
+        'canon_loc'
+        >>> find_username_by_email_local_part({"dinos": []}, "alias_loc")
     """
     if not phab_username:
         return None
@@ -468,7 +502,7 @@ def find_username_by_email_local_part(response: dict, phab_username: str) -> Opt
 def find_username_by_real_name(response: dict, real_name: str) -> Optional[str]:
     """Find the ``primary_username`` from a search response whose dino has
     a ``firstName + " " + lastName`` matching ``real_name`` (case-insensitive,
-    whitespace-collapsed).
+    whitespace-collapsed, accent-folded).
 
     Useful as a last-resort fallback when the Phab and PMO usernames have
     diverged and the PMO profile has no ``bugzillaMozillaOrgId`` to match
@@ -476,34 +510,69 @@ def find_username_by_real_name(response: dict, real_name: str) -> Optional[str]:
     already filtered by cheaper signals (case-insensitive username, BMO id)
     before reaching for this.
 
+    Names are folded via NFKD + stripping of combining marks so that
+    diacritics on either side don't block a match (Phab realName missing
+    accents that PMO carries, or vice versa).
+
     Examples:
         >>> find_username_by_real_name(
-        ...     {"dinos": [{"firstName": "Tim", "lastName": "Xia", "username": "tim_xia"}]},
-        ...     "Tim Xia",
+        ...     {"dinos": [{"firstName": "Aaa", "lastName": "Bbb", "username": "aaab"}]},
+        ...     "Aaa Bbb",
         ... )
-        'tim_xia'
+        'aaab'
         >>> find_username_by_real_name(
-        ...     {"dinos": [{"firstName": "tim", "lastName": "XIA", "username": "tim_xia"}]},
-        ...     "Tim Xia",
+        ...     {"dinos": [{"firstName": "aaa", "lastName": "BBB", "username": "aaab"}]},
+        ...     "Aaa Bbb",
         ... )
-        'tim_xia'
-        >>> find_username_by_real_name({"dinos": []}, "Tim Xia")
+        'aaab'
+        >>> find_username_by_real_name(
+        ...     {"dinos": [{"firstName": "Tést", "lastName": "Üser", "username": "tuser"}]},
+        ...     "Test User",
+        ... )
+        'tuser'
+        >>> find_username_by_real_name({"dinos": []}, "Aaa Bbb")
     """
     if not real_name:
         return None
-    target = " ".join(real_name.split()).lower()
+    target = _fold_name(real_name)
     if not target:
         return None
-    for dino in response.get("dinos") or []:
+    dinos = response.get("dinos") or []
+    for dino in dinos:
         candidate = dino.get("username")
         first = (dino.get("firstName") or "").strip()
         last = (dino.get("lastName") or "").strip()
         if not candidate or not first or not last:
             continue
-        full = " ".join(f"{first} {last}".split()).lower()
+        full = _fold_name(f"{first} {last}")
         if full == target:
             return str(candidate)
+
+    # Phab realName is sometimes a bare first name (no surname) while PMO
+    # carries the full first+last. Fall back to a firstName-only fold-match,
+    # but require it to be unique in the response so we don't silently pick
+    # one of several people who share a first name.
+    if " " not in target:
+        first_matches = []
+        for dino in dinos:
+            candidate = dino.get("username")
+            first = (dino.get("firstName") or "").strip()
+            if not candidate or not first:
+                continue
+            if _fold_name(first) == target:
+                first_matches.append(str(candidate))
+        if len(first_matches) == 1:
+            return first_matches[0]
     return None
+
+
+def _fold_name(s: str) -> str:
+    """Normalize a name for fuzzy equality: NFKD-decompose, drop combining
+    marks (diacritics), lowercase, and collapse whitespace.
+    """
+    decomposed = unicodedata.normalize("NFKD", s)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return " ".join(stripped.split()).lower()
 
 
 def find_username_case_insensitive(response: dict, query: str) -> Optional[str]:
