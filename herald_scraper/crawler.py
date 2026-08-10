@@ -237,7 +237,9 @@ class HeraldCrawler:
             max_groups: Optional limit on number of groups to collect (stops collecting early)
             people_client: Optional PeopleDirectoryClient for GitHub username resolution
             max_users: Optional limit on number of users to resolve (stops resolving early)
-            existing_output: Optional existing output to resume from (skip already-scraped items)
+            existing_output: Optional existing output to resume from. Rules are always
+                re-fetched and updated in place; groups and GitHub resolutions that are
+                already complete are reused.
             conduit_client: Optional ConduitClient used to cross-check GitHub resolution
                 against Phabricator's Bugzilla account and real name data
             manual_github_mapping: Optional Phab -> GitHub username overrides
@@ -284,19 +286,18 @@ class HeraldCrawler:
         else:
             all_rule_ids = self.extract_rule_ids(max_pages=max_pages, max_rules=max_rules)
 
-        # Filter out already-scraped rules
-        new_rule_ids = [rid for rid in all_rule_ids if rid not in existing_rule_ids]
+        # Re-fetch every listed rule: already-scraped rules are refreshed, not skipped
         if existing_rule_ids:
+            refreshed_count = len([rid for rid in all_rule_ids if rid in existing_rule_ids])
             logger.info(
-                f"Skipping {len(existing_rule_ids)} already-scraped rules, fetching {len(new_rule_ids)} new rules"
+                f"Refreshing {refreshed_count} already-scraped rules, "
+                f"fetching {len(all_rule_ids) - refreshed_count} new rules"
             )
 
-        # Extract new rules
-        new_rules = self.extract_rules(new_rule_ids)
+        fetched_rules, failed_rule_ids = self.extract_rules_with_failures(all_rule_ids)
 
-        # Merge rules (existing + new)
-        rules = existing_rules + new_rules
-        rules_complete = len(new_rule_ids) == 0 or len(new_rules) == len(new_rule_ids)
+        rules = self._merge_rules(existing_rules, fetched_rules, all_rule_ids, failed_rule_ids)
+        rules_complete = not failed_rule_ids
 
         # Collect group membership if requested
         groups: Dict[str, Group] = dict(existing_groups)
@@ -388,6 +389,41 @@ class HeraldCrawler:
             unresolved_users=unresolved_users,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _merge_rules(
+        existing_rules: List[Rule],
+        fetched_rules: List[Rule],
+        fetched_ids: List[str],
+        failed_ids: Set[str],
+    ) -> List[Rule]:
+        """
+        Overlay freshly fetched rules onto previously scraped ones.
+
+        A rule that was re-fetched replaces its existing copy, keeping its
+        original position. A rule the listing no longer offers, or one whose
+        fetch failed, keeps its existing copy. A rule that was fetched but no
+        longer qualifies (disabled, or no reviewers) is dropped.
+
+        Args:
+            existing_rules: Rules loaded from a previous run
+            fetched_rules: Rules successfully extracted in this run
+            fetched_ids: Rule IDs this run attempted to extract
+            failed_ids: Rule IDs whose extraction errored out
+
+        Returns:
+            Merged list of rules, existing order first, new rules appended
+        """
+        fetched_by_id = {rule.id: rule for rule in fetched_rules}
+        dropped_ids = set(fetched_ids) - set(fetched_by_id) - failed_ids
+
+        merged = [
+            fetched_by_id.pop(rule.id, rule)
+            for rule in existing_rules
+            if rule.id not in dropped_ids
+        ]
+        merged.extend(fetched_by_id.values())
+        return merged
 
     def _fetch_all_listing_pages(
         self, max_pages: int = 100
@@ -525,7 +561,24 @@ class HeraldCrawler:
         Returns:
             List of successfully extracted rules
         """
+        rules, _ = self.extract_rules_with_failures(rule_ids)
+        return rules
+
+    def extract_rules_with_failures(self, rule_ids: List[str]) -> Tuple[List[Rule], Set[str]]:
+        """
+        Extract multiple rules by their IDs, reporting which ones errored out.
+
+        Rules deliberately left out (disabled, or adding no reviewers) are not
+        failures: they are absent from both return values.
+
+        Args:
+            rule_ids: List of rule IDs to extract
+
+        Returns:
+            Tuple of (successfully extracted rules, IDs that could not be fetched or parsed)
+        """
         rules: List[Rule] = []
+        failed_ids: Set[str] = set()
         total = len(rule_ids)
 
         for i, rule_id in enumerate(rule_ids):
@@ -548,12 +601,15 @@ class HeraldCrawler:
                         logger.debug(f"Skipping rule {rule_id}: no reviewers")
                 else:
                     logger.warning(f"Failed to parse rule {rule_id}")
+                    failed_ids.add(rule_id)
             except requests.RequestException as e:
                 logger.error(f"Network error extracting rule {rule_id}: {e}")
+                failed_ids.add(rule_id)
             except RuleParseError as e:
                 logger.error(f"Parse error extracting rule {rule_id}: {e}")
+                failed_ids.add(rule_id)
             except Exception as e:
                 logger.exception(f"Unexpected error extracting rule {rule_id}: {e}")
                 raise
 
-        return rules
+        return rules, failed_ids

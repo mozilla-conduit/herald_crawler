@@ -118,7 +118,10 @@ def main() -> int:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume from existing output file, skipping already-scraped items",
+        help=(
+            "Resume from existing output file: rules are re-fetched and updated, "
+            "already-resolved groups and GitHub users are reused"
+        ),
     )
     parser.add_argument(
         "--force",

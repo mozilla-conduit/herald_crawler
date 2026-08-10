@@ -633,33 +633,39 @@ class TestAtomicWriteJson:
 class TestResumeFromExistingOutput:
     """Tests for resuming extraction from existing output."""
 
-    def test_resume_skips_existing_rules(
-        self,
-        listing_html: str,
-        rule_h420_html: str,
-        rule_h422_html: str,
-    ) -> None:
-        """Test that existing rules are skipped during resume."""
+    @staticmethod
+    def _existing_output_with_rules(*rules: Rule) -> HeraldRulesOutput:
+        """An output file as a previous run would have left it."""
         from datetime import datetime, timezone
 
-        # Create existing output with H420 already scraped
-        existing_output = HeraldRulesOutput(
-            rules=[
-                Rule(
-                    id="H420",
-                    name="Existing Rule",
-                    author="existing@example.com",
-                    status="active",
-                    type="differential-revision",
-                )
-            ],
+        return HeraldRulesOutput(
+            rules=list(rules),
             metadata=Metadata(
                 extracted_at=datetime.now(timezone.utc),
-                total_rules=1,
+                total_rules=len(rules),
                 total_groups=0,
                 phabricator_instance="phabricator.example.com",
             ),
         )
+
+    @staticmethod
+    def _stale_rule(rule_id: str) -> Rule:
+        """A previously scraped rule whose details are now out of date."""
+        return Rule(
+            id=rule_id,
+            name="Stale Rule",
+            author="existing@example.com",
+            status="active",
+            type="differential-revision",
+        )
+
+    def test_resume_updates_existing_rules(
+        self,
+        rule_h420_html: str,
+        rule_h422_html: str,
+    ) -> None:
+        """Test that existing rules are re-fetched and updated during resume."""
+        existing_output = self._existing_output_with_rules(self._stale_rule("H420"))
 
         # Mock client that returns listing with H420 and H422
         listing_with_two = """
@@ -668,10 +674,11 @@ class TestResumeFromExistingOutput:
             <a href="/H422">H422</a>
         </body></html>
         """
+        rule_html = {"H420": rule_h420_html, "H422": rule_h422_html}
         mock_client = Mock(spec=HeraldClient)
         mock_client.base_url = "https://phabricator.example.com"
         mock_client.fetch_listing.return_value = listing_with_two
-        mock_client.fetch_rule.return_value = rule_h422_html
+        mock_client.fetch_rule.side_effect = lambda rule_id: rule_html[rule_id]
 
         crawler = HeraldCrawler(client=mock_client)
         output = crawler.extract_all_rules(
@@ -680,10 +687,86 @@ class TestResumeFromExistingOutput:
             extract_groups=False,
         )
 
-        # Should have both rules (1 existing + 1 new)
-        assert len(output.rules) == 2
-        # Only H422 should have been fetched (H420 was in existing)
-        mock_client.fetch_rule.assert_called_once_with("H422")
+        # Both rules should have been fetched, including the already-scraped one
+        assert sorted(call.args[0] for call in mock_client.fetch_rule.call_args_list) == [
+            "H420",
+            "H422",
+        ]
+        # H420 appears once, with the freshly fetched details rather than the stale ones
+        rules_by_id = {rule.id: rule for rule in output.rules}
+        assert len(output.rules) == len(rules_by_id) == 2
+        assert rules_by_id["H420"].name != "Stale Rule"
+
+    def test_resume_keeps_existing_rule_when_refetch_fails(self) -> None:
+        """Test that a rule whose re-fetch fails keeps its previously scraped copy."""
+        import requests
+
+        existing_output = self._existing_output_with_rules(self._stale_rule("H420"))
+
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = '<html><body><a href="/H420">H420</a></body></html>'
+        mock_client.fetch_rule.side_effect = requests.RequestException("boom")
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=False,
+        )
+
+        assert [rule.name for rule in output.rules] == ["Stale Rule"]
+        assert output.metadata is not None
+        assert output.metadata.scrape_status is not None
+        assert output.metadata.scrape_status.rules_complete is False
+
+    def test_resume_keeps_existing_rule_absent_from_listing(self) -> None:
+        """Test that a rule the listing no longer offers is preserved."""
+        existing_output = self._existing_output_with_rules(self._stale_rule("H420"))
+
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = "<html><body></body></html>"
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=False,
+        )
+
+        assert [rule.id for rule in output.rules] == ["H420"]
+        mock_client.fetch_rule.assert_not_called()
+
+    def test_resume_drops_existing_rule_that_no_longer_qualifies(self) -> None:
+        """Test that a rule which became disabled is removed from the output."""
+        existing_output = self._existing_output_with_rules(self._stale_rule("H420"))
+
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = '<html><body><a href="/H420">H420</a></body></html>'
+        mock_client.fetch_rule.return_value = "<html><body></body></html>"
+
+        crawler = HeraldCrawler(client=mock_client)
+        crawler.extract_rule = Mock(  # type: ignore[method-assign]
+            return_value=Rule(
+                id="H420",
+                name="Now Disabled",
+                author="existing@example.com",
+                status="disabled",
+                type="differential-revision",
+            )
+        )
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=False,
+        )
+
+        assert output.rules == []
+        assert output.metadata is not None
+        assert output.metadata.scrape_status is not None
+        assert output.metadata.scrape_status.rules_complete is True
 
     def test_resume_preserves_existing_github_users(
         self,
