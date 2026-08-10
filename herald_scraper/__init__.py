@@ -16,23 +16,25 @@ from herald_scraper.models import (
     ScrapeStatus,
     UnresolvedUser,
 )
-from herald_scraper.resolvers import ConduitGroupCollector, GroupCollector, UsernameResolver
+from herald_scraper.resolvers import StmoGroupCollector, UsernameResolver
+from herald_scraper.stmo_client import StmoClient, StmoError
 
 __all__ = [
     "Action",
     "Condition",
     "ConduitClient",
     "ConduitError",
-    "ConduitGroupCollector",
     "GitHubUser",
     "Group",
-    "GroupCollector",
     "HeraldClient",
     "HeraldRulesOutput",
     "Metadata",
     "Reviewer",
     "Rule",
     "ScrapeStatus",
+    "StmoClient",
+    "StmoError",
+    "StmoGroupCollector",
     "UnresolvedUser",
     "UsernameResolver",
 ]

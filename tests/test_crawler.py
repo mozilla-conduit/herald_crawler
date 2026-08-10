@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 
 from herald_scraper.client import HeraldClient
+from herald_scraper.resolvers import StmoGroupCollector, extract_group_slugs_from_rules
 from herald_scraper.crawler import (
     HeraldCrawler,
     _sort_rule_ids,
@@ -886,3 +887,170 @@ class TestResumeFromExistingOutput:
         # Alice should still be in the output
         assert "alice" in output.github_users
         assert output.github_users["alice"].username == "alice-gh"
+
+
+class TestGroupCollectionViaStmo:
+    """Tests for wiring group collection to the STMO collector."""
+
+    @staticmethod
+    def _crawler_with_one_rule(rule_h420_html: str) -> HeraldCrawler:
+        """A crawler whose listing yields a single rule page."""
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = '<html><body><a href="/H420">H420</a></body></html>'
+        mock_client.fetch_rule.return_value = rule_h420_html
+        return HeraldCrawler(client=mock_client)
+
+    def test_groups_come_from_stmo_collector(self, rule_h420_html: str) -> None:
+        collector = Mock(spec=StmoGroupCollector)
+        collector.collect_all_groups.return_value = {
+            "alpha-reviewers": Group(
+                id="alpha-reviewers",
+                display_name="Alpha Reviewers",
+                members=["userone"],
+            )
+        }
+        collector.user_emails = {"userone": "userone@example.com"}
+
+        output = self._crawler_with_one_rule(rule_h420_html).extract_all_rules(
+            global_only=False,
+            extract_groups=True,
+            stmo_collector=collector,
+        )
+
+        assert output.groups["alpha-reviewers"].members == ["userone"]
+        collector.collect_all_groups.assert_called_once()
+
+    def test_max_groups_is_passed_through(self, rule_h420_html: str) -> None:
+        collector = Mock(spec=StmoGroupCollector)
+        collector.collect_all_groups.return_value = {}
+        collector.user_emails = {}
+
+        self._crawler_with_one_rule(rule_h420_html).extract_all_rules(
+            global_only=False,
+            extract_groups=True,
+            max_groups=3,
+            stmo_collector=collector,
+        )
+
+        assert collector.collect_all_groups.call_args[1]["max_groups"] == 3
+
+    def test_groups_incomplete_without_stmo_collector(self, rule_h420_html: str) -> None:
+        output = self._crawler_with_one_rule(rule_h420_html).extract_all_rules(
+            global_only=False,
+            extract_groups=True,
+        )
+
+        assert output.groups == {}
+        assert output.metadata is not None
+        assert output.metadata.scrape_status is not None
+        assert output.metadata.scrape_status.groups_complete is False
+
+    def test_groups_complete_when_every_referenced_group_has_members(
+        self, rule_h420_html: str
+    ) -> None:
+        crawler = self._crawler_with_one_rule(rule_h420_html)
+        # Resolve the slugs the fixture's rule actually references.
+        rules = crawler.extract_rules(["H420"])
+        referenced = sorted(extract_group_slugs_from_rules(rules))
+        assert referenced, "fixture rule H420 should reference at least one group"
+
+        collector = Mock(spec=StmoGroupCollector)
+        collector.collect_all_groups.return_value = {
+            slug: Group(id=slug, display_name=slug, members=["userone"]) for slug in referenced
+        }
+        collector.user_emails = {"userone": "userone@example.com"}
+
+        output = crawler.extract_all_rules(
+            global_only=False,
+            extract_groups=True,
+            stmo_collector=collector,
+        )
+
+        assert output.metadata is not None
+        assert output.metadata.scrape_status is not None
+        assert output.metadata.scrape_status.groups_complete is True
+
+    def test_group_with_empty_members_is_incomplete(self, rule_h420_html: str) -> None:
+        crawler = self._crawler_with_one_rule(rule_h420_html)
+        rules = crawler.extract_rules(["H420"])
+        referenced = sorted(extract_group_slugs_from_rules(rules))
+
+        collector = Mock(spec=StmoGroupCollector)
+        collector.collect_all_groups.return_value = {
+            slug: Group(id=slug, display_name=slug, members=[]) for slug in referenced
+        }
+        collector.user_emails = {}
+
+        output = crawler.extract_all_rules(
+            global_only=False,
+            extract_groups=True,
+            stmo_collector=collector,
+        )
+
+        assert output.metadata is not None
+        assert output.metadata.scrape_status is not None
+        assert output.metadata.scrape_status.groups_complete is False
+
+    def test_user_emails_land_in_the_output(self, rule_h420_html: str) -> None:
+        collector = Mock(spec=StmoGroupCollector)
+        collector.collect_all_groups.return_value = {}
+        collector.user_emails = {"userone": "userone@example.com"}
+
+        output = self._crawler_with_one_rule(rule_h420_html).extract_all_rules(
+            global_only=False,
+            extract_groups=True,
+            stmo_collector=collector,
+            resolve_github=False,
+        )
+
+        assert output.user_emails == {"userone": "userone@example.com"}
+
+
+class TestGithubResolutionWithoutPmoCookie:
+    """GitHub resolution runs even with no People Directory client."""
+
+    @staticmethod
+    def _crawler(rule_h420_html: str) -> HeraldCrawler:
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = '<html><body><a href="/H420">H420</a></body></html>'
+        mock_client.fetch_rule.return_value = rule_h420_html
+        return HeraldCrawler(client=mock_client)
+
+    def test_users_are_reported_unresolved_not_skipped(self, rule_h420_html: str) -> None:
+        output = self._crawler(rule_h420_html).extract_all_rules(
+            global_only=False,
+            extract_groups=False,
+            people_client=None,
+        )
+
+        assert output.unresolved_users, "users should be listed, not silently dropped"
+        assert all(u.reason == "no_people_directory_cookie" for u in output.unresolved_users)
+        assert output.metadata is not None
+        assert output.metadata.scrape_status is not None
+        assert output.metadata.scrape_status.github_complete is False
+
+    def test_manual_mapping_resolves_without_a_cookie(self, rule_h420_html: str) -> None:
+        crawler = self._crawler(rule_h420_html)
+        author = crawler.extract_rules(["H420"])[0].author
+
+        output = crawler.extract_all_rules(
+            global_only=False,
+            extract_groups=False,
+            people_client=None,
+            manual_github_mapping={author: GitHubUser(username="mapped-gh", user_id=7)},
+        )
+
+        assert output.github_users[author].username == "mapped-gh"
+
+    def test_resolve_github_false_skips_entirely(self, rule_h420_html: str) -> None:
+        output = self._crawler(rule_h420_html).extract_all_rules(
+            global_only=False,
+            extract_groups=False,
+            people_client=None,
+            resolve_github=False,
+        )
+
+        assert output.github_users == {}
+        assert output.unresolved_users == []
