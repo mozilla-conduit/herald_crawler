@@ -130,6 +130,10 @@ class HeraldRulesOutput(BaseModel):
         default_factory=dict,
         description="Mapping of Phabricator username to GitHub user info",
     )
+    user_emails: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of Phabricator username to email address",
+    )
     unresolved_users: List[UnresolvedUser] = Field(
         default_factory=list,
         description="Users whose GitHub username couldn't be resolved",

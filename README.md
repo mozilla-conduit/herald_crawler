@@ -10,7 +10,8 @@ This tool extracts Herald rules from a Phabricator instance (specifically https:
 
 - Extracts all Herald rules with conditions and actions
 - Resolves PHIDs to usernames, emails, and group names
-- Extracts group membership for reviewer groups
+- Fetches reviewer group membership from STMO's `phabricator_metrics.review_groups`
+- Resolves GitHub usernames optionally, so unattended runs need no browser session
 - Outputs structured JSON with complete metadata
 - Uses Pydantic for data validation and type safety
 
@@ -26,20 +27,73 @@ $ uv sync
 ```bash
 $ uv run herald-scraper \
   --url https://phabricator.services.mozilla.com \
-  --phab-cookie $PHABRICATOR_SESSION_COOKIE \
+  --stmo-api-key $REDASH_API_KEY \
   --conduit-token $CONDUIT_API_TOKEN \
   --pmo-cookie $PMO_COOKIE \
+  [--phab-cookie $PHABRICATOR_SESSION_COOKIE] \
   [--max-pages P] \
   [--max-groups G] \
   [--max-rules R] \
   --output herald_rules.$(date -Iseconds).json
 ```
 
+Get `$REDASH_API_KEY` from https://sql.telemetry.mozilla.org/users/me. `$STMO_DATA_SOURCE_ID` is the numeric ID of the data source hosting `phabricator_metrics.review_groups` (visible in the URL of the data source page under https://sql.telemetry.mozilla.org/data_sources).
+
 Get `$CONDUIT_API_TOKEN` from https://phabricator.services.mozilla.com/settings/user/YOUR_USERNAME/page/apitokens/
 
-Get `$PHABRICATOR_SESSION_COOKIE` from the same page and getting the value of the `phsid` cookie.
+Get `$PMO_COOKIE` by logging in to https://people.mozilla.org/ and getting the value of the `pmo-access` cookie.
 
-Get `$PMO_COOKIE` from by logging in to https://people.mozilla.org/ and getting the value of the `pmo-access` cookie.
+Get `$PHABRICATOR_SESSION_COOKIE` by logging in to Phabricator and getting the value of the `phsid` cookie. Not needed if using STMO.
+
+
+### Reviewer group membership
+
+Group membership comes from STMO's `phabricator_metrics.review_groups` table, which holds
+`group_name`, `group_usernames` and `group_emails`. It accumulates a row per group per collection
+run (tens of thousands of rows for ~150 groups), so the scraper runs a single ad-hoc query that
+keeps one row per group, then keeps the groups referenced by the rules it found:
+
+```sql
+SELECT group_name, group_usernames, group_emails
+FROM (
+  SELECT group_name, group_usernames, group_emails,
+         ROW_NUMBER() OVER (PARTITION BY group_name) AS row_num
+  FROM phabricator_metrics.review_groups
+)
+WHERE row_num = 1
+```
+
+With no `ORDER BY` in the window, the surviving row is the one inserted last, which is the current
+membership. That follows from the table being append-only and scanned in insertion order rather
+than being pinned down by the query.
+
+Override the table with `--stmo-table`. Authentication follows
+[`stmo-cli`](https://github.com/mozilla/stmo-cli): a Redash API key sent as
+`Authorization: Key <key>`, read from `--stmo-api-key` or `REDASH_API_KEY`, against
+`--stmo-url`/`REDASH_URL`.
+
+`group_emails` is not stored on the group: it is paired with `group_usernames` into the top-level
+`user_emails` mapping in the output.
+
+Without STMO credentials no groups are collected, `groups` and `user_emails` are empty and
+`metadata.scrape_status.groups_complete` is `false`.
+
+### Unattended runs
+
+Every credential beyond the Phabricator session cookie is optional, so a scheduled run needs no
+browser session other than `phsid`:
+
+| Credential | Needed for | Omitting it means |
+| --- | --- | --- |
+| `--phab-cookie` / `PHABRICATOR_SESSION_COOKIE` | scraping the rules themselves | required |
+| `--stmo-api-key` / `REDASH_API_KEY` | reviewer group membership | `groups` is empty, `groups_complete` is `false` |
+| `--conduit-token` / `PHABRICATOR_CONDUIT_TOKEN` | cross-checking GitHub resolution against Phabricator's Bugzilla ID and real name | resolution runs without the cross-check |
+| `--pmo-cookie` / `PEOPLE_MOZILLA_COOKIE` | resolving Phabricator users to GitHub users | `github_users` is empty, no People Directory requests |
+
+GitHub resolution is the one step that needs an interactive People Directory cookie, so it is the
+step to drop for automation. Pass `--no-resolve-github` to skip it explicitly; omitting the cookie
+skips it too, with a warning. `--github-user-mapping` supplies overrides from a JSON file for users
+the automatic path can't resolve, without needing the cookie at all.
 
 ## Development
 
@@ -124,6 +178,11 @@ The output JSON structure includes:
       "members": ["user-a", "user-b", "user-c"]
     }
   },
+  "user_emails": {
+    "user-a": "user-a@example.com",
+    "user-b": "user-b@example.com",
+    "user-c": "user-c@example.com"
+  },
   "github_users": {
     "user-a": {
       "username": "github-user-a",
@@ -163,6 +222,9 @@ The output JSON structure includes:
 - `github_users` is a single mapping from Phabricator username to `{username, user_id}` object
 - GitHub info for rule authors, reviewers, and group members is looked up via `github_users` (avoids duplication)
 - `groups.members` is a simple list of usernames; GitHub info is in `github_users`
+- `user_emails` is a top-level mapping from Phabricator username to email address, collected
+  from the STMO review-group table's parallel `group_usernames` / `group_emails` arrays. It only
+  covers users seen in a group, so it is empty when group collection is skipped
 - `scrape_status` in metadata enables resumable scraping
 
 ## Scripts

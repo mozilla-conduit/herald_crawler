@@ -1,18 +1,11 @@
 """Tests for the resolvers module."""
 
-from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from herald_scraper.models import Action, Group, Reviewer, Rule
-from herald_scraper.resolvers import (
-    GroupCollector,
-    UsernameResolver,
-    _clean_phab_real_name,
-)
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+from herald_scraper.models import Action, GitHubUser, Group, Reviewer, Rule
+from herald_scraper.resolvers import UsernameResolver, _clean_phab_real_name
 
 
 class TestCleanPhabRealName:
@@ -40,338 +33,6 @@ class TestCleanPhabRealName:
     def test_returns_none_for_empty_input(self):
         assert _clean_phab_real_name("") is None
         assert _clean_phab_real_name("   ") is None
-
-
-class TestGroupCollector:
-    """Tests for GroupCollector class."""
-
-    @pytest.fixture
-    def mock_client(self):
-        """Create a mock HeraldClient."""
-        return MagicMock()
-
-    @pytest.fixture
-    def collector(self, mock_client):
-        """Create a GroupCollector with mock client."""
-        return GroupCollector(mock_client)
-
-    @pytest.fixture
-    def sample_rules(self):
-        """Create sample rules with various reviewer types."""
-        return [
-            Rule(
-                id="H420",
-                name="Test Rule 1",
-                author="user@mozilla.com",
-                status="active",
-                type="differential-revision",
-                conditions=[],
-                actions=[
-                    Action(
-                        type="add-reviewers",
-                        reviewers=[
-                            Reviewer(target="omc-reviewers", blocking=True),
-                            Reviewer(target="user@mozilla.com", blocking=False),
-                        ],
-                    ),
-                ],
-            ),
-            Rule(
-                id="H421",
-                name="Test Rule 2",
-                author="another@mozilla.com",
-                status="active",
-                type="differential-revision",
-                conditions=[],
-                actions=[
-                    Action(
-                        type="add-reviewers",
-                        reviewers=[
-                            Reviewer(target="android-reviewers", blocking=True),
-                        ],
-                    ),
-                ],
-            ),
-            Rule(
-                id="H422",
-                name="Test Rule 3",
-                author="test@mozilla.com",
-                status="active",
-                type="differential-revision",
-                conditions=[],
-                actions=[
-                    Action(
-                        type="add-reviewers",
-                        reviewers=[
-                            Reviewer(target="omc-reviewers", blocking=True),  # Duplicate
-                        ],
-                    ),
-                ],
-            ),
-        ]
-
-    def test_extract_group_slugs_from_rules(self, collector, sample_rules):
-        """Test extracting unique group slugs from rules."""
-        slugs = collector.extract_group_slugs_from_rules(sample_rules)
-
-        # Should find 2 unique groups (omc-reviewers appears twice)
-        assert len(slugs) == 2
-        assert "omc-reviewers" in slugs
-        assert "android-reviewers" in slugs
-        # Users should NOT be included
-        assert "user@mozilla.com" not in slugs
-        assert "another@mozilla.com" not in slugs
-
-    def test_extract_group_slugs_empty_rules(self, collector):
-        """Test extracting groups from empty rule list."""
-        slugs = collector.extract_group_slugs_from_rules([])
-        assert len(slugs) == 0
-
-    def test_extract_group_slugs_no_reviewers(self, collector):
-        """Test extracting groups when rules have no reviewer actions."""
-        rules = [
-            Rule(
-                id="H999",
-                name="No Reviewers",
-                author="test@mozilla.com",
-                status="active",
-                type="differential-revision",
-                conditions=[],
-                actions=[
-                    Action(type="add-subscribers", targets=["sub@mozilla.com"]),
-                ],
-            ),
-        ]
-        slugs = collector.extract_group_slugs_from_rules(rules)
-        assert len(slugs) == 0
-
-    def test_fetch_group_success(self, collector, mock_client):
-        """Test successfully fetching a group."""
-        # Load fixtures
-        project_fixture = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        members_fixture = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
-        if not project_fixture.exists() or not members_fixture.exists():
-            pytest.skip("omc-reviewers fixtures not found")
-
-        mock_client.fetch_project.return_value = project_fixture.read_text()
-        mock_client.fetch_project_members.return_value = members_fixture.read_text()
-
-        group = collector.fetch_group("omc-reviewers")
-
-        assert group is not None
-        assert group.id == "omc-reviewers"
-        assert group.display_name == "omc-reviewers"
-        assert isinstance(group.members, list)
-        assert len(group.members) == 9  # Expected from members page
-        mock_client.fetch_project.assert_called_once_with("omc-reviewers")
-        mock_client.fetch_project_members.assert_called_once_with("171")
-
-    def test_fetch_group_caching(self, collector, mock_client):
-        """Test that groups are cached after first fetch."""
-        project_fixture = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        members_fixture = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
-        if not project_fixture.exists() or not members_fixture.exists():
-            pytest.skip("omc-reviewers fixtures not found")
-
-        mock_client.fetch_project.return_value = project_fixture.read_text()
-        mock_client.fetch_project_members.return_value = members_fixture.read_text()
-
-        # First fetch
-        group1 = collector.fetch_group("omc-reviewers")
-        # Second fetch (should use cache)
-        group2 = collector.fetch_group("omc-reviewers")
-
-        assert group1 is group2  # Same object from cache
-        # Client should only be called once
-        mock_client.fetch_project.assert_called_once()
-        mock_client.fetch_project_members.assert_called_once()
-
-    def test_fetch_group_failure(self, collector, mock_client):
-        """Test handling fetch failure."""
-        mock_client.fetch_project.side_effect = Exception("Network error")
-
-        group = collector.fetch_group("nonexistent-group")
-
-        assert group is None
-
-    def test_collect_all_groups(self, collector, mock_client, sample_rules):
-        """Test collecting all groups from rules."""
-        # Load fixtures for both groups
-        omc_project = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        omc_members = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
-        android_project = FIXTURES_DIR / "groups" / "android-reviewers.html"
-        android_members = FIXTURES_DIR / "groups" / "android-reviewers-members.html"
-
-        if not all(
-            f.exists() for f in [omc_project, omc_members, android_project, android_members]
-        ):
-            pytest.skip("Group fixtures not found")
-
-        def fetch_project_side_effect(slug):
-            if slug == "omc-reviewers":
-                return omc_project.read_text()
-            elif slug == "android-reviewers":
-                return android_project.read_text()
-            raise Exception(f"Unknown group: {slug}")
-
-        def fetch_members_side_effect(project_id):
-            if project_id == "171":  # omc-reviewers
-                return omc_members.read_text()
-            elif project_id == "200":  # android-reviewers
-                return android_members.read_text()
-            raise Exception(f"Unknown project_id: {project_id}")
-
-        mock_client.fetch_project.side_effect = fetch_project_side_effect
-        mock_client.fetch_project_members.side_effect = fetch_members_side_effect
-
-        groups = collector.collect_all_groups(sample_rules)
-
-        assert len(groups) == 2
-        assert "omc-reviewers" in groups
-        assert "android-reviewers" in groups
-        assert isinstance(groups["omc-reviewers"], Group)
-        assert isinstance(groups["android-reviewers"], Group)
-        assert len(groups["omc-reviewers"].members) == 9
-        assert len(groups["android-reviewers"].members) == 42
-
-    def test_collect_all_groups_partial_failure(self, collector, mock_client, sample_rules):
-        """Test collecting groups when some fail to fetch."""
-        omc_project = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        omc_members = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
-        if not omc_project.exists() or not omc_members.exists():
-            pytest.skip("omc-reviewers fixtures not found")
-
-        def fetch_project_side_effect(slug):
-            if slug == "omc-reviewers":
-                return omc_project.read_text()
-            raise Exception(f"Failed to fetch: {slug}")
-
-        def fetch_members_side_effect(project_id):
-            if project_id == "171":  # omc-reviewers
-                return omc_members.read_text()
-            raise Exception(f"Failed to fetch members: {project_id}")
-
-        mock_client.fetch_project.side_effect = fetch_project_side_effect
-        mock_client.fetch_project_members.side_effect = fetch_members_side_effect
-
-        groups = collector.collect_all_groups(sample_rules)
-
-        # Should still get omc-reviewers even though android-reviewers failed
-        assert len(groups) == 1
-        assert "omc-reviewers" in groups
-        assert "android-reviewers" not in groups
-
-    def test_clear_cache(self, collector, mock_client):
-        """Test clearing the cache."""
-        project_fixture = FIXTURES_DIR / "groups" / "omc-reviewers.html"
-        members_fixture = FIXTURES_DIR / "groups" / "omc-reviewers-members.html"
-        if not project_fixture.exists() or not members_fixture.exists():
-            pytest.skip("omc-reviewers fixtures not found")
-
-        mock_client.fetch_project.return_value = project_fixture.read_text()
-        mock_client.fetch_project_members.return_value = members_fixture.read_text()
-
-        # Fetch to populate cache
-        collector.fetch_group("omc-reviewers")
-        assert mock_client.fetch_project.call_count == 1
-
-        # Clear cache
-        collector.clear_cache()
-
-        # Fetch again - should call client again
-        collector.fetch_group("omc-reviewers")
-        assert mock_client.fetch_project.call_count == 2
-
-
-class TestGroupCollectorIntegration:
-    """Integration tests for GroupCollector with real fixtures."""
-
-    @pytest.fixture
-    def group_fixtures(self):
-        """Get all available group fixtures (excluding members pages)."""
-        groups_dir = FIXTURES_DIR / "groups"
-        if not groups_dir.exists():
-            pytest.skip("Groups fixtures directory not found")
-        # Exclude members page fixtures (*-members.html)
-        return {f.stem: f for f in groups_dir.glob("*.html") if not f.stem.endswith("-members")}
-
-    @pytest.fixture
-    def members_fixtures(self):
-        """Get all available members page fixtures."""
-        groups_dir = FIXTURES_DIR / "groups"
-        if not groups_dir.exists():
-            pytest.skip("Groups fixtures directory not found")
-        return {f.stem.replace("-members", ""): f for f in groups_dir.glob("*-members.html")}
-
-    # Project ID mapping for fixtures (extracted from project page fixtures)
-    PROJECT_IDS = {
-        "android-reviewers": "200",
-        "desktop-theme-reviewers": "141",
-        "dom-storage-reviewers": "147",
-        "geckodriver-reviewers": "232",
-        "geckoview-api-reviewers": "226",
-        "omc-reviewers": "171",
-        "profiler-reviewers": "190",
-        "reusable-components-reviewers-rotation": "185",
-        "sidebar-reviewers-rotation": "207",
-        "win-reviewers": "189",
-    }
-
-    def test_collect_groups_with_fixtures(self, group_fixtures, members_fixtures):
-        """Test collecting groups using real fixture files."""
-        if not group_fixtures or not members_fixtures:
-            pytest.skip("No group fixtures found")
-
-        mock_client = MagicMock()
-
-        def fetch_project_side_effect(slug):
-            if slug in group_fixtures:
-                return group_fixtures[slug].read_text()
-            raise Exception(f"No fixture for: {slug}")
-
-        def fetch_members_side_effect(project_id):
-            # Find the slug for this project_id
-            for slug, pid in self.PROJECT_IDS.items():
-                if pid == project_id and slug in members_fixtures:
-                    return members_fixtures[slug].read_text()
-            raise Exception(f"No members fixture for project_id: {project_id}")
-
-        mock_client.fetch_project.side_effect = fetch_project_side_effect
-        mock_client.fetch_project_members.side_effect = fetch_members_side_effect
-
-        collector = GroupCollector(mock_client)
-
-        # Create rules that reference all fixture groups
-        rules = [
-            Rule(
-                id="H999",
-                name="Test All Groups",
-                author="test@mozilla.com",
-                status="active",
-                type="differential-revision",
-                conditions=[],
-                actions=[
-                    Action(
-                        type="add-reviewers",
-                        reviewers=[
-                            Reviewer(target=slug, blocking=True) for slug in group_fixtures.keys()
-                        ],
-                    ),
-                ],
-            ),
-        ]
-
-        groups = collector.collect_all_groups(rules)
-
-        # Should collect all groups from fixtures
-        assert len(groups) == len(group_fixtures)
-        for slug in group_fixtures.keys():
-            assert slug in groups
-            assert isinstance(groups[slug], Group)
-            assert groups[slug].id == slug
-            # Verify members were extracted from members page
-            if slug in members_fixtures:
-                assert len(groups[slug].members) > 0, f"Expected members for {slug}"
 
 
 class TestUsernameResolver:
@@ -890,3 +551,69 @@ class TestUsernameResolverBMOVerification:
 
         assert mock_conduit_client.user_search.call_count == 1
         assert mock_conduit_client.bugzilla_account_search.call_count == 1
+
+
+class TestUsernameResolverWithoutPeopleClient:
+    """Resolution still runs without a PMO cookie, on overrides alone."""
+
+    @staticmethod
+    def _rule(author: str, *reviewers: str) -> Rule:
+        return Rule(
+            id="H420",
+            name="Test Rule",
+            author=author,
+            status="active",
+            type="differential-revision",
+            actions=[
+                Action(
+                    type="add-reviewers",
+                    reviewers=[Reviewer(target=r, is_group=False) for r in reviewers],
+                )
+            ],
+        )
+
+    def test_manual_mapping_still_resolves(self):
+        resolver = UsernameResolver(
+            None, manual_mapping={"mappeduser": GitHubUser(username="mapped-gh", user_id=1)}
+        )
+
+        resolved, unresolved, hit_max = resolver.resolve_all(
+            [self._rule("mappeduser")], {}, delay=0
+        )
+
+        assert resolved["mappeduser"].username == "mapped-gh"
+        assert unresolved == []
+        assert hit_max is False
+
+    def test_unmapped_users_are_reported_not_dropped(self):
+        resolver = UsernameResolver(None)
+
+        resolved, unresolved, _ = resolver.resolve_all(
+            [self._rule("ruleauthor", "someuser")], {}, delay=0
+        )
+
+        assert resolved == {}
+        assert {u.phabricator_username for u in unresolved} == {"ruleauthor", "someuser"}
+        assert all(u.reason == "no_people_directory_cookie" for u in unresolved)
+
+    def test_group_members_are_reported_too(self):
+        resolver = UsernameResolver(None)
+        groups = {
+            "alpha-reviewers": Group(
+                id="alpha-reviewers", display_name="Alpha", members=["memberone"]
+            )
+        }
+
+        _, unresolved, _ = resolver.resolve_all([self._rule("ruleauthor")], groups, delay=0)
+
+        by_name = {u.phabricator_username: u for u in unresolved}
+        assert by_name["memberone"].referenced_in == ["group:alpha-reviewers"]
+
+    def test_no_sleeping_without_a_client(self):
+        resolver = UsernameResolver(None)
+        rule = self._rule("ruleauthor", "usera", "userb")
+
+        with patch("herald_scraper.resolvers.time.sleep") as sleep:
+            resolver.resolve_all([rule], {}, delay=5.0)
+
+        sleep.assert_not_called()

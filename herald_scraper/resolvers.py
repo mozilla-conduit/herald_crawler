@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
 from typing import Dict, List, Optional, Set, Tuple
 
-from herald_scraper.client import HeraldClient
 from herald_scraper.conduit_client import ConduitClient
-from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.models import GitHubUser, Group, Rule, UnresolvedUser
-from herald_scraper.parsers import ProjectMembersPageParser, ProjectPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
+from herald_scraper.stmo_client import StmoClient
 
 logger = logging.getLogger(__name__)
 
@@ -50,18 +49,54 @@ def extract_group_slugs_from_rules(rules: List[Rule]) -> Set[str]:
     return group_slugs
 
 
-class GroupCollector:
-    """Collects group membership for reviewer groups referenced in Herald rules."""
+REVIEW_GROUPS_TABLE = "phabricator_metrics.review_groups"
 
-    def __init__(self, client: HeraldClient) -> None:
+# Table and column names are interpolated into SQL, so restrict them to
+# dotted identifiers (BigQuery project IDs may contain hyphens).
+_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$")
+
+_MEMBER_SEPARATOR_RE = re.compile(r"[,;\s]+")
+_NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+class StmoGroupCollector:
+    """Collects reviewer group membership from STMO's review groups table.
+
+    ``phabricator_metrics.review_groups`` holds one row per group, with the
+    members already resolved to usernames and emails, so a single query
+    fetches every group at once -- replacing the per-group Phabricator
+    lookups this collector supersedes.
+
+    Example:
+        from herald_scraper.stmo_client import StmoClient
+
+        collector = StmoGroupCollector(StmoClient(api_key="...", data_source_id=63))
+        groups = collector.collect_all_groups(rules)
+    """
+
+    def __init__(
+        self,
+        client: StmoClient,
+        table: str = REVIEW_GROUPS_TABLE,
+    ) -> None:
         """
-        Initialize the GroupCollector.
+        Initialize the STMO group collector.
 
         Args:
-            client: HeraldClient instance for fetching project pages
+            client: StmoClient used to run the query
+            table: Fully-qualified review groups table
+
+        Raises:
+            ValueError: If table is not a plain SQL identifier
         """
+        if not _SQL_IDENTIFIER_RE.match(table):
+            raise ValueError(f"Invalid STMO table name: {table!r}")
+
         self.client = client
-        self._cache: Dict[str, Group] = {}
+        self.table = table
+        self._groups_by_name: Optional[Dict[str, Group]] = None
+        self._groups_by_slug: Dict[str, Group] = {}
+        self._user_emails: Dict[str, str] = {}
 
     def extract_group_slugs_from_rules(self, rules: List[Rule]) -> Set[str]:
         """
@@ -77,130 +112,203 @@ class GroupCollector:
         """
         return extract_group_slugs_from_rules(rules)
 
-    def fetch_group(self, slug: str) -> Optional[Group]:
-        """
-        Fetch and parse group info for a single group.
-
-        Uses the dedicated members page (/project/members/{id}/) for authoritative
-        membership data.
-
-        Uses caching to avoid duplicate fetches.
-
-        Args:
-            slug: Project/group slug (e.g., 'omc-reviewers')
-
-        Returns:
-            Group object if successful, None if fetch/parse fails
-        """
-        # Check cache first
-        if slug in self._cache:
-            logger.debug(f"Cache hit for group: {slug}")
-            return self._cache[slug]
-
-        try:
-            logger.info(f"Fetching group: {slug}")
-
-            # First fetch project page to get project_id and basic info
-            project_html = self.client.fetch_project(slug)
-            logger.debug(f"Fetched project page for {slug}: {len(project_html)} bytes")
-
-            project_parser = ProjectPageParser(project_html)
-            project_info = project_parser.extract_project_info()
-            logger.debug(
-                f"Parsed project info for {slug}: "
-                f"id={project_info['id']}, "
-                f"project_id={project_info.get('project_id')}, "
-                f"display_name={project_info['display_name']}"
-            )
-
-            # Fetch members from dedicated members page
-            members = []
-            project_id = project_info.get("project_id")
-            if project_id:
-                try:
-                    logger.info(f"Fetching members page for {slug} (ID: {project_id})")
-                    members_html = self.client.fetch_project_members(project_id)
-                    logger.info(f"Fetched members page: {len(members_html)} bytes")
-
-                    # Check what links are in the page
-                    profile_links = re.findall(r'href="/p/([^"]+)/"', members_html)
-                    has_oi_link = "phui-oi-link" in members_html
-                    logger.info(
-                        f"Page has phui-oi-link: {has_oi_link}, profile links: {len(profile_links)}"
-                    )
-
-                    members_parser = ProjectMembersPageParser(members_html)
-                    members = members_parser.extract_members()
-                    logger.info(f"Got {len(members)} members from members page for {slug}")
-
-                    if len(members) == 0:
-                        # Log detailed info to help debug
-                        logger.warning(
-                            f"No members extracted for {slug}. "
-                            f"HTML size: {len(members_html)} bytes, "
-                            f"has phui-oi-link: {has_oi_link}, "
-                            f"profile links found: {profile_links[:10]}"
-                        )
-                        if not has_oi_link:
-                            logger.warning(f"HTML snippet: {members_html[:1000]}")
-                except AuthenticationError as e:
-                    logger.warning(
-                        f"Authentication required to fetch members for {slug}. "
-                        f"Group will have empty members list. Error: {e}"
-                    )
-            else:
-                logger.warning(f"No project_id found for {slug}, cannot fetch members")
-
-            group = Group(
-                id=project_info["id"],
-                display_name=project_info["display_name"],
-                members=members,
-            )
-
-            # Cache the result
-            self._cache[slug] = group
-            logger.info(f"Collected group {slug}: {len(group.members)} members")
-            return group
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch group {slug}: {e}", exc_info=True)
-            return None
-
     def collect_all_groups(
         self, rules: List[Rule], max_groups: Optional[int] = None
     ) -> Dict[str, Group]:
         """
-        Collect all groups referenced in the given rules.
+        Collect the groups referenced by the given rules.
 
         Args:
             rules: List of Rule objects to collect groups from
-            max_groups: Optional limit on number of groups to collect (stops collecting early)
+            max_groups: Optional limit on number of groups to collect
 
         Returns:
-            Dictionary mapping group slugs to Group objects
+            Dictionary mapping group slugs (as referenced in rules) to Groups
         """
         group_slugs = self.extract_group_slugs_from_rules(rules)
+        if not group_slugs:
+            logger.info("No reviewer groups referenced in rules, skipping STMO query")
+            return {}
+
+        available = self.fetch_all_groups()
         groups: Dict[str, Group] = {}
 
         for slug in sorted(group_slugs):
-            # Check if we've collected enough groups
             if max_groups is not None and len(groups) >= max_groups:
                 logger.info(f"Collected {len(groups)} groups, stopping (max_groups={max_groups})")
                 break
 
-            group = self.fetch_group(slug)
-            if group:
-                groups[slug] = group
-            else:
-                logger.warning(f"Could not collect group: {slug}")
+            group = self._lookup_group(slug)
+            if group is None:
+                logger.warning(f"Group not present in {self.table}: {slug}")
+                continue
 
-        logger.info(f"Collected {len(groups)} of {len(group_slugs)} groups")
+            # Key the output by the slug the rules use, not STMO's group_name,
+            # so downstream lookups by reviewer target keep working.
+            groups[slug] = group.model_copy(update={"id": slug})
+
+        logger.info(
+            f"Collected {len(groups)} of {len(group_slugs)} referenced groups "
+            f"from {len(available)} STMO review groups"
+        )
         return groups
 
+    def fetch_all_groups(self) -> Dict[str, Group]:
+        """
+        Fetch every review group, one row each, keyed by STMO group name.
+
+        The result is cached, so repeated calls run a single query.
+
+        Raises:
+            StmoError: If the query fails
+        """
+        if self._groups_by_name is None:
+            rows = self.client.run_query(self.build_query())
+            self._groups_by_name = self._groups_from_rows(rows)
+            self._groups_by_slug = self._index_by_slug(self._groups_by_name)
+        return self._groups_by_name
+
+    def build_query(self) -> str:
+        """Build the SQL selecting one row per group.
+
+        The table keeps a row per group per collection run (tens of thousands
+        of rows for ~150 groups), so rows are numbered within each
+        ``group_name`` and only the first is kept. With no ``ORDER BY`` in the
+        window that is the row inserted last, i.e. the current membership --
+        a property of the append-only table being scanned in insertion order,
+        not something the query itself pins down.
+        """
+        return (
+            "SELECT group_name, group_usernames, group_emails\n"
+            "FROM (\n"
+            "  SELECT group_name, group_usernames, group_emails,\n"
+            "         ROW_NUMBER() OVER (PARTITION BY group_name) AS row_num\n"
+            f"  FROM {self.table}\n"
+            ")\n"
+            "WHERE row_num = 1"
+        )
+
+    @property
+    def user_emails(self) -> Dict[str, str]:
+        """``username -> email`` for every member seen, populated by the query."""
+        return dict(self._user_emails)
+
     def clear_cache(self) -> None:
-        """Clear the internal group cache."""
-        self._cache.clear()
-        logger.debug("Group cache cleared")
+        """Clear the cached query result."""
+        self._groups_by_name = None
+        self._groups_by_slug = {}
+        self._user_emails = {}
+        logger.debug("STMO group collector cache cleared")
+
+    def _lookup_group(self, slug: str) -> Optional[Group]:
+        """Find a group by the slug a rule referenced.
+
+        Rules reference Phabricator project slugs, while ``group_name`` may
+        hold either the slug or the human-readable name, so fall back to
+        comparing slugified names.
+        """
+        groups = self.fetch_all_groups()
+        if slug in groups:
+            return groups[slug]
+        return self._groups_by_slug.get(_slugify(slug))
+
+    def _groups_from_rows(self, rows: List[Dict[str, object]]) -> Dict[str, Group]:
+        """Turn query rows into Groups keyed by their STMO ``group_name``.
+
+        Also accumulates the ``username -> email`` mapping, which the table
+        carries as two parallel arrays per group.
+        """
+        groups: Dict[str, Group] = {}
+
+        for row in rows:
+            raw_name = row.get("group_name")
+            if not raw_name:
+                logger.warning(f"Skipping {self.table} row with no group_name: {row}")
+                continue
+
+            name = str(raw_name)
+            members = _coerce_string_list(row.get("group_usernames"))
+            if not members:
+                logger.warning(f"Group {name} has no usernames in {self.table}")
+
+            self._collect_user_emails(name, members, _coerce_string_list(row.get("group_emails")))
+            groups[name] = Group(id=name, display_name=name, members=members)
+
+        return groups
+
+    def _collect_user_emails(
+        self, group_name: str, usernames: List[str], emails: List[str]
+    ) -> None:
+        """Pair a group's parallel username and email arrays into the mapping."""
+        if emails and len(emails) != len(usernames):
+            logger.warning(
+                f"Group {group_name} has {len(usernames)} usernames but {len(emails)} "
+                f"emails in {self.table}; pairing only the overlap"
+            )
+
+        for username, email in zip(usernames, emails):
+            existing = self._user_emails.get(username)
+            if existing and existing != email:
+                logger.warning(
+                    f"Conflicting emails for {username} in {self.table}, keeping the first"
+                )
+                continue
+            self._user_emails[username] = email
+
+    def _index_by_slug(self, groups: Dict[str, Group]) -> Dict[str, Group]:
+        """Index groups by slugified name, dropping ambiguous collisions."""
+        index: Dict[str, Group] = {}
+        collisions: Set[str] = set()
+
+        for name, group in groups.items():
+            key = _slugify(name)
+            if not key:
+                continue
+            if key in index and index[key] is not group:
+                collisions.add(key)
+                continue
+            index[key] = group
+
+        for key in collisions:
+            logger.warning(f"Ambiguous slugified group name in {self.table}: {key}")
+            del index[key]
+
+        return index
+
+
+def _slugify(name: str) -> str:
+    """Normalize a group name for slug comparison ('OMC Reviewers' -> 'omc-reviewers')."""
+    return _NON_SLUG_RE.sub("-", name.lower()).strip("-")
+
+
+def _coerce_string_list(value: object) -> List[str]:
+    """Coerce an STMO cell into a list of non-empty strings.
+
+    Repeated BigQuery columns arrive as lists, but the same data is also
+    seen as a JSON array or a delimited string depending on how the view
+    is materialized, so accept all three.
+    """
+    if value is None:
+        return []
+
+    if isinstance(value, (list, tuple)):
+        items: List[str] = []
+        for item in value:
+            items.extend(_coerce_string_list(item))
+        return items
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            try:
+                return _coerce_string_list(json.loads(text))
+            except json.JSONDecodeError:
+                logger.debug(f"Value looks like a JSON array but did not parse: {text!r}")
+        return [part for part in _MEMBER_SEPARATOR_RE.split(text) if part]
+
+    return [str(value)]
 
 
 _IRC_NICK_SUFFIX_RE = re.compile(r"\s*\[:[^\]]*\]\s*")
@@ -224,7 +332,7 @@ class UsernameResolver:
 
     def __init__(
         self,
-        client: PeopleDirectoryClient,
+        client: Optional[PeopleDirectoryClient] = None,
         conduit_client: Optional[ConduitClient] = None,
         manual_mapping: Optional[Dict[str, GitHubUser]] = None,
     ) -> None:
@@ -232,7 +340,10 @@ class UsernameResolver:
         Initialize the UsernameResolver.
 
         Args:
-            client: PeopleDirectoryClient instance for resolving usernames
+            client: Optional PeopleDirectoryClient for resolving usernames.
+                Without one (no PMO cookie), only ``manual_mapping`` can
+                resolve a user; everyone else is reported as unresolved
+                rather than silently omitted.
             conduit_client: Optional ConduitClient. When provided, each
                 resolution cross-checks the PMO profile's
                 ``bugzillaMozillaOrgId`` against Phabricator's
@@ -395,6 +506,13 @@ class UsernameResolver:
             logger.debug(f"Already unresolved: {lookup_name}")
             return None
 
+        # No People Directory access: record the user as unresolved instead of
+        # dropping them, so the output still lists who needs a manual mapping.
+        if self.client is None:
+            self._unresolved[lookup_name] = "no_people_directory_cookie"
+            logger.debug(f"No PMO cookie, cannot resolve {lookup_name}")
+            return None
+
         try:
             expected_bmo_id, expected_real_name = self._fetch_phab_info(lookup_name)
             resolution = self.client.resolve_github(
@@ -478,8 +596,8 @@ class UsernameResolver:
 
             count += 1
 
-            # Rate limiting between requests
-            if count < len(all_refs):
+            # Rate limiting between requests (no requests without a client)
+            if delay and self.client is not None and count < len(all_refs):
                 time.sleep(delay)
 
         # Build unresolved users list with references
@@ -511,177 +629,3 @@ class UsernameResolver:
         logger.debug("Username resolver cache cleared")
 
 
-class ConduitGroupCollector:
-    """Collects group membership using the Conduit API.
-
-    Uses project.search and user.search API methods to fetch group membership
-    data. More reliable and efficient than HTML scraping.
-
-    Example:
-        from herald_scraper.conduit_client import ConduitClient
-
-        conduit = ConduitClient(base_url="...", api_token="...")
-        collector = ConduitGroupCollector(conduit)
-        groups = collector.collect_all_groups(rules)
-    """
-
-    def __init__(self, client: ConduitClient) -> None:
-        """
-        Initialize the ConduitGroupCollector.
-
-        Args:
-            client: ConduitClient instance for API calls
-        """
-        self.client = client
-        self._group_cache: Dict[str, Group] = {}
-        self._phid_to_username: Dict[str, str] = {}
-
-    def extract_group_slugs_from_rules(self, rules: List[Rule]) -> Set[str]:
-        """
-        Extract unique group slugs from rule reviewer actions.
-
-        Delegates to the module-level function for implementation.
-
-        Args:
-            rules: List of Rule objects to extract groups from
-
-        Returns:
-            Set of unique group slugs
-        """
-        return extract_group_slugs_from_rules(rules)
-
-    def _resolve_phids_to_usernames(self, phids: List[str]) -> Dict[str, str]:
-        """
-        Resolve user PHIDs to usernames using user.search API.
-
-        Uses internal cache to avoid duplicate lookups.
-
-        Args:
-            phids: List of user PHIDs to resolve
-
-        Returns:
-            Dictionary mapping PHID to username
-        """
-        if not phids:
-            return {}
-
-        # Filter out PHIDs we already have cached
-        uncached_phids = [p for p in phids if p not in self._phid_to_username]
-
-        if uncached_phids:
-            logger.debug(f"Resolving {len(uncached_phids)} user PHIDs via Conduit API")
-            try:
-                users = self.client.user_search(phids=uncached_phids)
-                for user in users:
-                    user_phid = user.get("phid")
-                    username = user.get("fields", {}).get("username")
-                    if user_phid and username:
-                        self._phid_to_username[user_phid] = username
-            except Exception as e:
-                logger.warning(f"Error resolving user PHIDs: {e}")
-
-        # Return mapping for requested PHIDs
-        return {p: self._phid_to_username[p] for p in phids if p in self._phid_to_username}
-
-    def fetch_group(self, slug: str) -> Optional[Group]:
-        """
-        Fetch and parse group info for a single group using Conduit API.
-
-        Uses project.search with members attachment to get project info
-        and member PHIDs, then resolves PHIDs to usernames.
-
-        Uses caching to avoid duplicate fetches.
-
-        Args:
-            slug: Project/group slug (e.g., 'omc-reviewers')
-
-        Returns:
-            Group object if successful, None if not found or API error
-        """
-        # Check cache first
-        if slug in self._group_cache:
-            logger.debug(f"Cache hit for group: {slug}")
-            return self._group_cache[slug]
-
-        try:
-            logger.info(f"Fetching group via Conduit API: {slug}")
-
-            # Fetch project with members attachment
-            projects = self.client.project_search(
-                slugs=[slug],
-                attachments={"members": True},
-            )
-
-            if not projects:
-                logger.warning(f"Project not found: {slug}")
-                return None
-
-            project = projects[0]
-            fields = project.get("fields", {})
-            display_name = fields.get("name", slug)
-
-            # Extract member PHIDs
-            member_phids = []
-            members_attachment = project.get("attachments", {}).get("members", {})
-            for member in members_attachment.get("members", []):
-                phid = member.get("phid")
-                if phid:
-                    member_phids.append(phid)
-
-            logger.debug(f"Found {len(member_phids)} member PHIDs for {slug}")
-
-            # Resolve PHIDs to usernames
-            phid_to_username = self._resolve_phids_to_usernames(member_phids)
-            members = [phid_to_username[p] for p in member_phids if p in phid_to_username]
-
-            group = Group(
-                id=slug,
-                display_name=display_name,
-                members=members,
-            )
-
-            # Cache the result
-            self._group_cache[slug] = group
-            logger.info(f"Collected group {slug}: {len(group.members)} members")
-            return group
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch group {slug}: {e}", exc_info=True)
-            return None
-
-    def collect_all_groups(
-        self, rules: List[Rule], max_groups: Optional[int] = None
-    ) -> Dict[str, Group]:
-        """
-        Collect all groups referenced in the given rules.
-
-        Args:
-            rules: List of Rule objects to collect groups from
-            max_groups: Optional limit on number of groups to collect
-
-        Returns:
-            Dictionary mapping group slugs to Group objects
-        """
-        group_slugs = self.extract_group_slugs_from_rules(rules)
-        groups: Dict[str, Group] = {}
-
-        for slug in sorted(group_slugs):
-            # Check if we've collected enough groups
-            if max_groups is not None and len(groups) >= max_groups:
-                logger.info(f"Collected {len(groups)} groups, stopping (max_groups={max_groups})")
-                break
-
-            group = self.fetch_group(slug)
-            if group:
-                groups[slug] = group
-            else:
-                logger.warning(f"Could not collect group: {slug}")
-
-        logger.info(f"Collected {len(groups)} of {len(group_slugs)} groups")
-        return groups
-
-    def clear_cache(self) -> None:
-        """Clear the internal caches."""
-        self._group_cache.clear()
-        self._phid_to_username.clear()
-        logger.debug("Conduit group collector cache cleared")

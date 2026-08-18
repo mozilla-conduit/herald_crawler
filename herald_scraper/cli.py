@@ -17,6 +17,13 @@ from herald_scraper.crawler import (
 )
 from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.people_client import PeopleDirectoryClient
+from herald_scraper.resolvers import REVIEW_GROUPS_TABLE, StmoGroupCollector
+from herald_scraper.stmo_client import (
+    DEFAULT_DATA_SOURCE,
+    DEFAULT_STMO_URL,
+    StmoClient,
+    StmoError,
+)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -111,7 +118,10 @@ def main() -> int:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume from existing output file, skipping already-scraped items",
+        help=(
+            "Resume from existing output file: rules are re-fetched and updated, "
+            "already-resolved groups and GitHub users are reused"
+        ),
     )
     parser.add_argument(
         "--force",
@@ -124,11 +134,40 @@ def main() -> int:
         help="Input file to resume from (defaults to output file if --resume is used)",
     )
 
-    # Conduit API option (alternative to HTML scraping for groups)
+    # Conduit API option (cross-checks GitHub resolution against Phabricator)
     parser.add_argument(
         "--conduit-token",
-        help="Conduit API token for group membership (or set PHABRICATOR_CONDUIT_TOKEN env var). "
-        "Preferred over HTML scraping.",
+        help="Conduit API token used to cross-check GitHub resolution against "
+        "Phabricator's Bugzilla account and real name data "
+        "(or set PHABRICATOR_CONDUIT_TOKEN env var)",
+    )
+
+    # STMO options (source of reviewer group membership)
+    parser.add_argument(
+        "--stmo-api-key",
+        help="Redash API key for sql.telemetry.mozilla.org, the source of reviewer "
+        "group membership (or set REDASH_API_KEY env var). Without it, groups "
+        "are not collected.",
+    )
+    parser.add_argument(
+        "--stmo-url",
+        help=f"Redash instance URL (or set REDASH_URL env var, default: {DEFAULT_STMO_URL})",
+    )
+    parser.add_argument(
+        "--stmo-data-source",
+        help="STMO data source hosting the review groups table, as a name or a "
+        f"numeric ID (or set STMO_DATA_SOURCE env var, default: {DEFAULT_DATA_SOURCE!r})",
+    )
+    parser.add_argument(
+        "--stmo-table",
+        default=REVIEW_GROUPS_TABLE,
+        help=f"Review groups table to query (default: {REVIEW_GROUPS_TABLE})",
+    )
+    parser.add_argument(
+        "--stmo-query-timeout",
+        type=float,
+        default=300.0,
+        help="Seconds to wait for the STMO query to finish (default: 300.0)",
     )
 
     # GitHub username resolution options
@@ -194,7 +233,7 @@ def main() -> int:
             elif args.resume:
                 logger.warning("--resume specified but no output file given, starting fresh")
 
-        # Set up Conduit client for group membership (preferred over HTML scraping)
+        # Set up Conduit client to cross-check GitHub resolution
         conduit_client = None
         conduit_token = args.conduit_token or os.environ.get("PHABRICATOR_CONDUIT_TOKEN")
         if conduit_token:
@@ -206,12 +245,25 @@ def main() -> int:
                     delay=args.delay,
                     timeout=args.timeout,
                 )
-                logger.info("Using Conduit API for group membership collection")
+                logger.info("Using Conduit API to cross-check GitHub resolution")
             else:
                 logger.warning(
                     "Conduit token provided but no Phabricator URL. "
-                    "Falling back to HTML scraping for groups."
+                    "GitHub resolution will not be cross-checked against Phabricator."
                 )
+
+        # Set up STMO client for reviewer group membership
+        stmo_collector = None
+        if args.stmo_api_key or os.environ.get("REDASH_API_KEY"):
+            stmo_client = StmoClient.from_environment(
+                api_key=args.stmo_api_key,
+                data_source=args.stmo_data_source,
+                base_url=args.stmo_url,
+                timeout=args.timeout,
+                poll_timeout=args.stmo_query_timeout,
+            )
+            stmo_collector = StmoGroupCollector(stmo_client, table=args.stmo_table)
+            logger.info(f"Collecting reviewer groups from {args.stmo_table} on STMO")
 
         # Set up People Directory client for GitHub resolution (enabled by default)
         people_client = None
@@ -222,8 +274,10 @@ def main() -> int:
                 logger.info("GitHub username resolution enabled")
             else:
                 logger.warning(
-                    "GitHub resolution skipped: no PMO cookie available. "
-                    "Set PEOPLE_MOZILLA_COOKIE env var or use --pmo-cookie"
+                    "No PMO cookie: GitHub usernames will only come from "
+                    "--github-user-mapping, and every other user will be reported as "
+                    "unresolved. Set PEOPLE_MOZILLA_COOKIE or use --pmo-cookie to "
+                    "resolve them."
                 )
 
         manual_github_mapping = None
@@ -245,6 +299,8 @@ def main() -> int:
             existing_output=existing_output,
             conduit_client=conduit_client,
             manual_github_mapping=manual_github_mapping,
+            stmo_collector=stmo_collector,
+            resolve_github=not args.no_resolve_github,
         )
 
         if args.output:
@@ -272,6 +328,9 @@ def main() -> int:
         logger.error(f"Authentication failed: {e}")
         logger.error("Please check your PHABRICATOR_SESSION_COOKIE environment variable")
         return 2
+    except StmoError as e:
+        logger.error(f"STMO query failed: {e}")
+        return 3
     except requests.RequestException as e:
         logger.error(f"Network error: {e}")
         url = args.url or "PHABRICATOR_URL"

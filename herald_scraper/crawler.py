@@ -25,7 +25,11 @@ from herald_scraper.models import (
 )
 from herald_scraper.parsers import ListingPageParser, RuleDetailPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
-from herald_scraper.resolvers import ConduitGroupCollector, GroupCollector, UsernameResolver
+from herald_scraper.resolvers import (
+    StmoGroupCollector,
+    UsernameResolver,
+    extract_group_slugs_from_rules,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +223,8 @@ class HeraldCrawler:
         existing_output: Optional[HeraldRulesOutput] = None,
         conduit_client: Optional[ConduitClient] = None,
         manual_github_mapping: Optional[Dict[str, GitHubUser]] = None,
+        stmo_collector: Optional[StmoGroupCollector] = None,
+        resolve_github: bool = True,
     ) -> HeraldRulesOutput:
         """
         Extract all Herald rules and return complete output.
@@ -231,8 +237,17 @@ class HeraldCrawler:
             max_groups: Optional limit on number of groups to collect (stops collecting early)
             people_client: Optional PeopleDirectoryClient for GitHub username resolution
             max_users: Optional limit on number of users to resolve (stops resolving early)
-            existing_output: Optional existing output to resume from (skip already-scraped items)
-            conduit_client: Optional ConduitClient for group membership via API (preferred over HTML scraping)
+            existing_output: Optional existing output to resume from. Rules are always
+                re-fetched and updated in place; groups and GitHub resolutions that are
+                already complete are reused.
+            conduit_client: Optional ConduitClient used to cross-check GitHub resolution
+                against Phabricator's Bugzilla account and real name data
+            manual_github_mapping: Optional Phab -> GitHub username overrides
+            stmo_collector: Optional StmoGroupCollector for group membership.
+                Group collection is skipped when this is None.
+            resolve_github: If True (default), run GitHub resolution. It runs even
+                without a people_client, resolving from manual_github_mapping and
+                reporting everyone else as unresolved.
 
         Returns:
             HeraldRulesOutput with all extracted rules, groups, and metadata
@@ -241,6 +256,7 @@ class HeraldCrawler:
         existing_rule_ids: Set[str] = set()
         existing_groups: Dict[str, Group] = {}
         existing_github_users: Dict[str, GitHubUser] = {}
+        existing_user_emails: Dict[str, str] = {}
         existing_unresolved: Dict[str, str] = {}  # username -> reason
         existing_rules: List[Rule] = []
 
@@ -254,6 +270,7 @@ class HeraldCrawler:
                 if group.members  # non-empty members list
             }
             existing_github_users = dict(existing_output.github_users)
+            existing_user_emails = dict(existing_output.user_emails)
             existing_unresolved = {
                 u.phabricator_username: u.reason for u in existing_output.unresolved_users
             }
@@ -269,57 +286,54 @@ class HeraldCrawler:
         else:
             all_rule_ids = self.extract_rule_ids(max_pages=max_pages, max_rules=max_rules)
 
-        # Filter out already-scraped rules
-        new_rule_ids = [rid for rid in all_rule_ids if rid not in existing_rule_ids]
+        # Re-fetch every listed rule: already-scraped rules are refreshed, not skipped
         if existing_rule_ids:
+            refreshed_count = len([rid for rid in all_rule_ids if rid in existing_rule_ids])
             logger.info(
-                f"Skipping {len(existing_rule_ids)} already-scraped rules, fetching {len(new_rule_ids)} new rules"
+                f"Refreshing {refreshed_count} already-scraped rules, "
+                f"fetching {len(all_rule_ids) - refreshed_count} new rules"
             )
 
-        # Extract new rules
-        new_rules = self.extract_rules(new_rule_ids)
+        fetched_rules, failed_rule_ids = self.extract_rules_with_failures(all_rule_ids)
 
-        # Merge rules (existing + new)
-        rules = existing_rules + new_rules
-        rules_complete = len(new_rule_ids) == 0 or len(new_rules) == len(new_rule_ids)
+        rules = self._merge_rules(existing_rules, fetched_rules, all_rule_ids, failed_rule_ids)
+        rules_complete = not failed_rule_ids
 
         # Collect group membership if requested
         groups: Dict[str, Group] = dict(existing_groups)
+        user_emails: Dict[str, str] = dict(existing_user_emails)
         groups_complete = True
         if extract_groups and rules:
-            if conduit_client:
-                # Use Conduit API (preferred)
-                logger.info("Collecting group membership via Conduit API")
-                conduit_collector = ConduitGroupCollector(conduit_client)
-
-                # Pre-populate cache with existing groups
-                for slug, group in existing_groups.items():
-                    conduit_collector._group_cache[slug] = group
-
-                all_groups = conduit_collector.collect_all_groups(rules, max_groups=max_groups)
+            if stmo_collector:
+                logger.info("Collecting group membership from STMO review groups")
+                groups.update(stmo_collector.collect_all_groups(rules, max_groups=max_groups))
+                user_emails.update(stmo_collector.user_emails)
             else:
-                # Fall back to HTML scraping
-                logger.info("Collecting group membership via HTML scraping")
-                html_collector = GroupCollector(self.client)
+                logger.warning(
+                    "Group membership collection skipped: no STMO client configured. "
+                    "Set REDASH_API_KEY and STMO_DATA_SOURCE_ID, or pass "
+                    "--stmo-api-key and --stmo-data-source."
+                )
 
-                # Pre-populate cache with existing groups
-                for slug, group in existing_groups.items():
-                    html_collector._cache[slug] = group
-
-                all_groups = html_collector.collect_all_groups(rules, max_groups=max_groups)
-
-            groups.update(all_groups)
-
-            # Check if any groups have empty members (incomplete)
-            groups_complete = all(group.members for group in groups.values())
+            # Every group a rule references needs non-empty members to be complete
+            groups_complete = all(
+                slug in groups and bool(groups[slug].members)
+                for slug in extract_group_slugs_from_rules(rules)
+            )
 
         # Resolve GitHub usernames and user IDs if people_client provided
         github_users: Dict[str, GitHubUser] = dict(existing_github_users)
         unresolved_users: List[UnresolvedUser] = []
         github_complete = True
 
-        if people_client and rules:
-            logger.info("Resolving GitHub usernames for users")
+        if resolve_github and rules:
+            if people_client:
+                logger.info("Resolving GitHub usernames for users")
+            else:
+                logger.info(
+                    "Resolving GitHub usernames from manual overrides only "
+                    "(no PMO cookie); everyone else will be listed as unresolved"
+                )
             username_resolver = UsernameResolver(
                 people_client,
                 conduit_client=conduit_client,
@@ -333,7 +347,10 @@ class HeraldCrawler:
                 username_resolver._unresolved[username] = reason
 
             new_users, new_unresolved, hit_max_users = username_resolver.resolve_all(
-                rules, groups, max_users=max_users, delay=people_client.delay
+                rules,
+                groups,
+                max_users=max_users,
+                delay=people_client.delay if people_client else 0,
             )
 
             github_users.update(new_users)
@@ -341,8 +358,9 @@ class HeraldCrawler:
             # Rebuild unresolved list from resolver's state
             unresolved_users = new_unresolved
 
-            # GitHub resolution is complete if we didn't hit the max_users limit
-            github_complete = not hit_max_users
+            # Complete only if we saw every user and had a way to look them up;
+            # without a PMO cookie most users stay unresolved.
+            github_complete = not hit_max_users and people_client is not None
 
         parsed_url = urlparse(self.client.base_url)
         instance = parsed_url.netloc or self.client.base_url
@@ -367,9 +385,45 @@ class HeraldCrawler:
             rules=rules,
             groups=groups,
             github_users=github_users,
+            user_emails=user_emails,
             unresolved_users=unresolved_users,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _merge_rules(
+        existing_rules: List[Rule],
+        fetched_rules: List[Rule],
+        fetched_ids: List[str],
+        failed_ids: Set[str],
+    ) -> List[Rule]:
+        """
+        Overlay freshly fetched rules onto previously scraped ones.
+
+        A rule that was re-fetched replaces its existing copy, keeping its
+        original position. A rule the listing no longer offers, or one whose
+        fetch failed, keeps its existing copy. A rule that was fetched but no
+        longer qualifies (disabled, or no reviewers) is dropped.
+
+        Args:
+            existing_rules: Rules loaded from a previous run
+            fetched_rules: Rules successfully extracted in this run
+            fetched_ids: Rule IDs this run attempted to extract
+            failed_ids: Rule IDs whose extraction errored out
+
+        Returns:
+            Merged list of rules, existing order first, new rules appended
+        """
+        fetched_by_id = {rule.id: rule for rule in fetched_rules}
+        dropped_ids = set(fetched_ids) - set(fetched_by_id) - failed_ids
+
+        merged = [
+            fetched_by_id.pop(rule.id, rule)
+            for rule in existing_rules
+            if rule.id not in dropped_ids
+        ]
+        merged.extend(fetched_by_id.values())
+        return merged
 
     def _fetch_all_listing_pages(
         self, max_pages: int = 100
@@ -507,7 +561,24 @@ class HeraldCrawler:
         Returns:
             List of successfully extracted rules
         """
+        rules, _ = self.extract_rules_with_failures(rule_ids)
+        return rules
+
+    def extract_rules_with_failures(self, rule_ids: List[str]) -> Tuple[List[Rule], Set[str]]:
+        """
+        Extract multiple rules by their IDs, reporting which ones errored out.
+
+        Rules deliberately left out (disabled, or adding no reviewers) are not
+        failures: they are absent from both return values.
+
+        Args:
+            rule_ids: List of rule IDs to extract
+
+        Returns:
+            Tuple of (successfully extracted rules, IDs that could not be fetched or parsed)
+        """
         rules: List[Rule] = []
+        failed_ids: Set[str] = set()
         total = len(rule_ids)
 
         for i, rule_id in enumerate(rule_ids):
@@ -530,12 +601,15 @@ class HeraldCrawler:
                         logger.debug(f"Skipping rule {rule_id}: no reviewers")
                 else:
                     logger.warning(f"Failed to parse rule {rule_id}")
+                    failed_ids.add(rule_id)
             except requests.RequestException as e:
                 logger.error(f"Network error extracting rule {rule_id}: {e}")
+                failed_ids.add(rule_id)
             except RuleParseError as e:
                 logger.error(f"Parse error extracting rule {rule_id}: {e}")
+                failed_ids.add(rule_id)
             except Exception as e:
                 logger.exception(f"Unexpected error extracting rule {rule_id}: {e}")
                 raise
 
-        return rules
+        return rules, failed_ids
