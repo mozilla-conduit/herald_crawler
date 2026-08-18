@@ -993,7 +993,6 @@ class TestGroupCollectionViaStmo:
                 members=["userone"],
             )
         }
-        collector.user_emails = {"userone": "userone@example.com"}
 
         output = self._crawler_with_one_rule(rule_h420_html).extract_all_rules(
             global_only=False,
@@ -1007,7 +1006,6 @@ class TestGroupCollectionViaStmo:
     def test_max_groups_is_passed_through(self, rule_h420_html: str) -> None:
         collector = Mock(spec=StmoGroupCollector)
         collector.collect_all_groups.return_value = {}
-        collector.user_emails = {}
 
         self._crawler_with_one_rule(rule_h420_html).extract_all_rules(
             global_only=False,
@@ -1042,7 +1040,6 @@ class TestGroupCollectionViaStmo:
         collector.collect_all_groups.return_value = {
             slug: Group(id=slug, display_name=slug, members=["userone"]) for slug in referenced
         }
-        collector.user_emails = {"userone": "userone@example.com"}
 
         output = crawler.extract_all_rules(
             global_only=False,
@@ -1063,7 +1060,6 @@ class TestGroupCollectionViaStmo:
         collector.collect_all_groups.return_value = {
             slug: Group(id=slug, display_name=slug, members=[]) for slug in referenced
         }
-        collector.user_emails = {}
 
         output = crawler.extract_all_rules(
             global_only=False,
@@ -1074,21 +1070,6 @@ class TestGroupCollectionViaStmo:
         assert output.metadata is not None
         assert output.metadata.scrape_status is not None
         assert output.metadata.scrape_status.groups_complete is False
-
-    def test_user_emails_land_in_the_output(self, rule_h420_html: str) -> None:
-        collector = Mock(spec=StmoGroupCollector)
-        collector.collect_all_groups.return_value = {}
-        collector.user_emails = {"userone": "userone@example.com"}
-
-        output = self._crawler_with_one_rule(rule_h420_html).extract_all_rules(
-            global_only=False,
-            extract_groups=True,
-            stmo_collector=collector,
-            resolve_github=False,
-        )
-
-        assert output.user_emails == {"userone": "userone@example.com"}
-
 
 class TestGithubResolutionWithoutPmoCookie:
     """GitHub resolution runs even with no People Directory client."""

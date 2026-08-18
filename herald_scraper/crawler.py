@@ -256,7 +256,6 @@ class HeraldCrawler:
         existing_rule_ids: Set[str] = set()
         existing_groups: Dict[str, Group] = {}
         existing_github_users: Dict[str, GitHubUser] = {}
-        existing_user_emails: Dict[str, str] = {}
         existing_unresolved: Dict[str, str] = {}  # username -> reason
         existing_rules: List[Rule] = []
 
@@ -270,7 +269,6 @@ class HeraldCrawler:
                 if group.members  # non-empty members list
             }
             existing_github_users = dict(existing_output.github_users)
-            existing_user_emails = dict(existing_output.user_emails)
             existing_unresolved = {
                 u.phabricator_username: u.reason for u in existing_output.unresolved_users
             }
@@ -301,13 +299,11 @@ class HeraldCrawler:
 
         # Collect group membership if requested
         groups: Dict[str, Group] = dict(existing_groups)
-        user_emails: Dict[str, str] = dict(existing_user_emails)
         groups_complete = True
         if extract_groups and rules:
             if stmo_collector:
                 logger.info("Collecting group membership from STMO review groups")
                 groups.update(stmo_collector.collect_all_groups(rules, max_groups=max_groups))
-                user_emails.update(stmo_collector.user_emails)
             else:
                 logger.warning(
                     "Group membership collection skipped: no STMO client configured. "
@@ -385,7 +381,6 @@ class HeraldCrawler:
             rules=rules,
             groups=groups,
             github_users=github_users,
-            user_emails=user_emails,
             unresolved_users=unresolved_users,
             metadata=metadata,
         )
