@@ -72,10 +72,7 @@ Override the table with `--stmo-table`. Authentication follows
 `Authorization: Key <key>`, read from `--stmo-api-key` or `REDASH_API_KEY`, against
 `--stmo-url`/`REDASH_URL`.
 
-`group_emails` is not stored on the group: it is paired with `group_usernames` into the top-level
-`user_emails` mapping in the output.
-
-Without STMO credentials no groups are collected, `groups` and `user_emails` are empty and
+Without STMO credentials no groups are collected, `groups` are empty and
 `metadata.scrape_status.groups_complete` is `false`.
 
 ### Unattended runs
@@ -178,11 +175,6 @@ The output JSON structure includes:
       "members": ["user-a", "user-b", "user-c"]
     }
   },
-  "user_emails": {
-    "user-a": "user-a@example.com",
-    "user-b": "user-b@example.com",
-    "user-c": "user-c@example.com"
-  },
   "github_users": {
     "user-a": {
       "username": "github-user-a",
@@ -222,9 +214,6 @@ The output JSON structure includes:
 - `github_users` is a single mapping from Phabricator username to `{username, user_id}` object
 - GitHub info for rule authors, reviewers, and group members is looked up via `github_users` (avoids duplication)
 - `groups.members` is a simple list of usernames; GitHub info is in `github_users`
-- `user_emails` is a top-level mapping from Phabricator username to email address, collected
-  from the STMO review-group table's parallel `group_usernames` / `group_emails` arrays. It only
-  covers users seen in a group, so it is empty when group collection is skipped
 - `scrape_status` in metadata enables resumable scraping
 
 ## Scripts

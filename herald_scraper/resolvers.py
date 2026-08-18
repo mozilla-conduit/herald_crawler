@@ -96,7 +96,6 @@ class StmoGroupCollector:
         self.table = table
         self._groups_by_name: Optional[Dict[str, Group]] = None
         self._groups_by_slug: Dict[str, Group] = {}
-        self._user_emails: Dict[str, str] = {}
 
     def extract_group_slugs_from_rules(self, rules: List[Rule]) -> Set[str]:
         """
@@ -188,16 +187,10 @@ class StmoGroupCollector:
             "WHERE row_num = 1"
         )
 
-    @property
-    def user_emails(self) -> Dict[str, str]:
-        """``username -> email`` for every member seen, populated by the query."""
-        return dict(self._user_emails)
-
     def clear_cache(self) -> None:
         """Clear the cached query result."""
         self._groups_by_name = None
         self._groups_by_slug = {}
-        self._user_emails = {}
         logger.debug("STMO group collector cache cleared")
 
     def _lookup_group(self, slug: str) -> Optional[Group]:
@@ -231,29 +224,9 @@ class StmoGroupCollector:
             if not members:
                 logger.warning(f"Group {name} has no usernames in {self.table}")
 
-            self._collect_user_emails(name, members, _coerce_string_list(row.get("group_emails")))
             groups[name] = Group(id=name, display_name=name, members=members)
 
         return groups
-
-    def _collect_user_emails(
-        self, group_name: str, usernames: List[str], emails: List[str]
-    ) -> None:
-        """Pair a group's parallel username and email arrays into the mapping."""
-        if emails and len(emails) != len(usernames):
-            logger.warning(
-                f"Group {group_name} has {len(usernames)} usernames but {len(emails)} "
-                f"emails in {self.table}; pairing only the overlap"
-            )
-
-        for username, email in zip(usernames, emails):
-            existing = self._user_emails.get(username)
-            if existing and existing != email:
-                logger.warning(
-                    f"Conflicting emails for {username} in {self.table}, keeping the first"
-                )
-                continue
-            self._user_emails[username] = email
 
     def _index_by_slug(self, groups: Dict[str, Group]) -> Dict[str, Group]:
         """Index groups by slugified name, dropping ambiguous collisions."""
