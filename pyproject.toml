@@ -9,7 +9,7 @@ description = "Web scraper to extract Herald rules from Phabricator"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
-    {name = "Mozilla", email = "dev-platform@lists.mozilla.org"}
+    {name = "Mozilla Conduit", email = "conduit-team@mozilla.com"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
