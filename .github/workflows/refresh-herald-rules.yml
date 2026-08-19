@@ -1,0 +1,77 @@
+name: Refresh Herald rules
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  REVIEWER_SELECTOR_REPO: mozilla-conduit/reviewer-selector
+  REFRESH_BRANCH: herald-rules-refresh
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      # gh CLI picks this up automatically; used both to read herald_rules.json from
+      # reviewer-selector and later to push a branch and open a PR against it.
+      GH_TOKEN: ${{ secrets.REVIEWER_SELECTOR_GH_TOKEN }}
+    steps:
+      - name: Check out herald_crawler
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          # Install a specific version of uv.
+          version: "0.11.3"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Check out reviewer-selector
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.REVIEWER_SELECTOR_REPO }}
+          token: ${{ secrets.REVIEWER_SELECTOR_GH_TOKEN }}
+          path: reviewer-selector
+          persist-credentials: false
+
+      - name: Run herald-scraper
+        env:
+          REDASH_API_KEY: ${{ secrets.REDASH_API_KEY }}
+        run: |
+          uv run herald-scraper \
+            --url https://phabricator.services.mozilla.com \
+            --stmo-api-key "$REDASH_API_KEY" \
+            --no-resolve-github \
+            --input reviewer-selector/herald_rules.orig \
+            --output herald_rules.json
+
+      - name: Commit and push refreshed herald_rules.json
+        working-directory: reviewer-selector
+        run: |
+          cp ../herald_rules.json herald_rules.json
+          git config user.name "herald-crawler-bot"
+          git config user.email "conduit-team+herald-crawler-bot@mozilla.com"
+          git checkout -B "$REFRESH_BRANCH"
+          git add herald_rules.json
+          git commit -m "herald_rules: update $(date +%Y-%m-%d) (bug 2048101)"
+          git push --force-with-lease origin "$REFRESH_BRANCH"
+
+      - name: Open or update pull request
+        working-directory: reviewer-selector
+        run: |
+          if [ -z "$(gh pr list --repo "$REVIEWER_SELECTOR_REPO" \
+                       --head "$REFRESH_BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --repo "$REVIEWER_SELECTOR_REPO" \
+              --head "$REFRESH_BRANCH" \
+              --title "herald_rules: update $(date +%Y-%m-%d) (bug 2048101)" \
+              --body "Automated refresh of herald_rules.json by herald_crawler's scheduled workflow."
+          fi
