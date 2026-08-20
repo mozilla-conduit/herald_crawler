@@ -49,8 +49,8 @@ jobs:
         with:
           name: herald_rules.json
           path: herald_rules.json
-          # Keep for two update cycles.
-          retention-days: 14
+          # Keep for a bit more than two update cycles.
+          retention-days: 16
 
   commit-rules:
     name: Commit rules in reviewer-selector
@@ -72,7 +72,7 @@ jobs:
           repository: ${{ env.TARGET_REPO }}
           token: ${{ secrets.REVIEWER_SELECTOR_GH_TOKEN }}
           path: reviewer-selector
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Commit and push refreshed herald_rules.json
         working-directory: reviewer-selector
