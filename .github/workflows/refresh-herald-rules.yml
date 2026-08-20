@@ -57,8 +57,6 @@ jobs:
     needs: refresh-rules
     runs-on: ubuntu-latest
     env:
-      # gh CLI picks this up automatically; used both to read herald_rules.json from
-      # reviewer-selector and later to push a branch and open a PR against it.
       GH_TOKEN: ${{ secrets.REVIEWER_SELECTOR_GH_TOKEN }}
     steps:
       - name: Download new rules
