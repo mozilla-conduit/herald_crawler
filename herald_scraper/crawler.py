@@ -358,6 +358,12 @@ class HeraldCrawler:
             # without a PMO cookie most users stay unresolved.
             github_complete = not hit_max_users and people_client is not None
 
+        # Emit users in a stable, lexicographic order regardless of discovery order
+        for group in groups.values():
+            group.members.sort()
+        github_users = dict(sorted(github_users.items()))
+        unresolved_users.sort(key=lambda u: u.phabricator_username)
+
         parsed_url = urlparse(self.client.base_url)
         instance = parsed_url.netloc or self.client.base_url
 
