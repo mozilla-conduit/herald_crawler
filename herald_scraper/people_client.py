@@ -1,11 +1,12 @@
 """Client for Mozilla People Directory API."""
 
 import logging
-import time
 import unicodedata
 from typing import NamedTuple, Optional
 
 import requests
+
+from herald_scraper.rate_limit import raise_for_rate_limit
 
 
 class GitHubResolution(NamedTuple):
@@ -71,17 +72,31 @@ class PeopleDirectoryClient:
     2. REST API to get GitHub username from GitHub ID
     """
 
-    def __init__(self, cookie: str, delay: float = 0.5) -> None:
+    def __init__(self, cookie: str) -> None:
         """Initialize the People Directory client.
+
+        Requests are not paced: the client runs at full speed and only backs
+        off when a response reports a rate limit (see
+        ``rate_limit_wait_seconds``).
 
         Args:
             cookie: pmo-access cookie value for authentication
-            delay: Delay between requests in seconds (rate limiting)
         """
-        self.delay = delay
         self._session = requests.Session()
         self._session.cookies.set("pmo-access", cookie, domain=".mozilla.org")
         self._session.headers["User-Agent"] = "HeraldScraper/0.1"
+
+    @staticmethod
+    def _check_response(response: requests.Response, what: str) -> None:
+        """Raise on an error response, telling rate limits apart from failures.
+
+        Rate limits become ``RateLimitError`` so ``UsernameResolver`` can wait
+        and retry the whole lookup instead of recording the user as
+        permanently unresolved. PMO's ``/whoami/github/`` endpoint proxies
+        GitHub, so GitHub's own limits surface through it.
+        """
+        raise_for_rate_limit(response, what)
+        response.raise_for_status()
 
     def get_github_id(self, username: str) -> dict:
         """Get GitHub ID from Phabricator username via GraphQL.
@@ -101,7 +116,7 @@ class PeopleDirectoryClient:
 
         logger.debug(f"Querying GitHub ID for: {username}")
         response = self._session.post(PMO_GRAPHQL_URL, headers=headers, json=payload)
-        response.raise_for_status()
+        self._check_response(response, f"querying GitHub ID for {username}")
         result: dict = response.json()
         return result
 
@@ -123,7 +138,7 @@ class PeopleDirectoryClient:
 
         logger.debug(f"Querying Bugzilla ID for: {username}")
         response = self._session.post(PMO_GRAPHQL_URL, headers=headers, json=payload)
-        response.raise_for_status()
+        self._check_response(response, f"querying Bugzilla ID for {username}")
         result: dict = response.json()
         return result
 
@@ -140,7 +155,7 @@ class PeopleDirectoryClient:
 
         logger.debug(f"Querying GitHub username for ID: {github_id}")
         response = self._session.get(url)
-        response.raise_for_status()
+        self._check_response(response, f"querying GitHub username for ID {github_id}")
         result: dict = response.json()
         return result
 
@@ -162,7 +177,7 @@ class PeopleDirectoryClient:
         response = self._session.get(
             PMO_SEARCH_SIMPLE_URL, params={"q": query, "w": "all"}
         )
-        response.raise_for_status()
+        self._check_response(response, f"searching profiles for {query}")
         result: dict = response.json()
         return result
 
@@ -216,20 +231,17 @@ class PeopleDirectoryClient:
         # the Phab realName so the same fallbacks can match against a more
         # relevant result set.
         if not github_id and not profile_found:
-            time.sleep(self.delay)
             search_response = self.search_simple(username)
             resolved = self._match_search_fallbacks(
                 search_response, username, expected_bmo_id, expected_real_name
             )
             if not resolved and expected_real_name:
-                time.sleep(self.delay)
                 search_response = self.search_simple(expected_real_name)
                 resolved = self._match_search_fallbacks(
                     search_response, username, expected_bmo_id, expected_real_name
                 )
             if resolved and resolved != username:
                 logger.info(f"PMO username fallback: {username} -> {resolved}")
-                time.sleep(self.delay)
                 graphql_response = self.get_github_id(resolved)
                 github_id = extract_github_id(graphql_response)
                 if not _profile_not_found(graphql_response):
@@ -267,7 +279,6 @@ class PeopleDirectoryClient:
         # unlinked, etc.), there's nothing to contradict, so we keep the
         # resolution.
         if expected_bmo_id is not None:
-            time.sleep(self.delay)
             bmo_response = self.get_bugzilla_id(canonical_name)
             actual_bmo_id = extract_bugzilla_id(bmo_response)
             if actual_bmo_id is None:
@@ -283,9 +294,6 @@ class PeopleDirectoryClient:
                 return GitHubResolution(
                     username=None, user_id=None, reason="bmo_id_mismatch"
                 )
-
-        # Rate limit between API calls
-        time.sleep(self.delay)
 
         # Step 2: Get GitHub username from ID
         rest_response = self.get_github_username_by_id(github_id)
@@ -338,7 +346,6 @@ class PeopleDirectoryClient:
             candidate = dino.get("username")
             if not candidate:
                 continue
-            time.sleep(self.delay)
             bmo_response = self.get_bugzilla_id(candidate)
             candidate_bmo_id = extract_bugzilla_id(bmo_response)
             if candidate_bmo_id and candidate_bmo_id == expected_bmo_id:

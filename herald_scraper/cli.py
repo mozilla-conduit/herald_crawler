@@ -96,12 +96,6 @@ def main() -> int:
         help="Only fetch the first page of rules (equivalent to --max-pages 1)",
     )
     parser.add_argument(
-        "--delay",
-        type=float,
-        default=1.0,
-        help="Delay between requests in seconds (default: 1.0)",
-    )
-    parser.add_argument(
         "--timeout",
         type=float,
         default=30.0,
@@ -207,7 +201,6 @@ def main() -> int:
             client = HeraldClient(
                 base_url=args.url,
                 session_cookie=args.phab_cookie,
-                delay=args.delay,
                 timeout=args.timeout,
             )
         else:
@@ -242,7 +235,6 @@ def main() -> int:
                 conduit_client = ConduitClient(
                     base_url=base_url,
                     api_token=conduit_token,
-                    delay=args.delay,
                     timeout=args.timeout,
                 )
                 logger.info("Using Conduit API to cross-check GitHub resolution")
@@ -270,7 +262,7 @@ def main() -> int:
         if not args.no_resolve_github:
             pmo_cookie = args.pmo_cookie or os.environ.get("PEOPLE_MOZILLA_COOKIE")
             if pmo_cookie:
-                people_client = PeopleDirectoryClient(cookie=pmo_cookie, delay=args.delay)
+                people_client = PeopleDirectoryClient(cookie=pmo_cookie)
                 logger.info("GitHub username resolution enabled")
             else:
                 logger.warning(

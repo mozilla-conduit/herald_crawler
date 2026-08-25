@@ -1,11 +1,13 @@
 """Tests for the STMO (Redash) client."""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
+from herald_scraper.exceptions import RateLimitError
+from herald_scraper.rate_limit import MAX_RATE_LIMIT_RETRIES
 from herald_scraper.stmo_client import (
     DEFAULT_DATA_SOURCE,
     DEFAULT_STMO_URL,
@@ -19,12 +21,19 @@ from herald_scraper.stmo_client import (
 )
 
 
-def make_response(status_code: int = 200, json_body: Any = None) -> MagicMock:
+def make_response(
+    status_code: int = 200,
+    json_body: Any = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> MagicMock:
     """Build a mock requests.Response returning json_body."""
     response = MagicMock(spec=requests.Response)
     response.status_code = status_code
     response.json.return_value = json_body
     response.raise_for_status.return_value = None
+    # Real responses always carry headers; the rate-limit check reads them.
+    response.headers = dict(headers or {})
+    response.text = ""
     return response
 
 
@@ -366,3 +375,60 @@ class TestStmoClientRunQuery:
 
             with pytest.raises(requests.HTTPError):
                 client.run_query("SELECT 1")
+
+
+class TestStmoClientRateLimit:
+    """STMO calls back off on a rate limit rather than failing outright."""
+
+    def test_rate_limited_post_is_retried(self, client: StmoClient) -> None:
+        with patch.object(client._session, "post") as post:
+            post.side_effect = [
+                make_response(status_code=429, headers={"retry-after": "5"}),
+                make_response(json_body=job(JOB_SUCCESS, query_result_id=99)),
+            ]
+            with patch.object(client._session, "get") as get:
+                get.return_value = make_response(
+                    json_body=query_result(["reviewer_group"], [["alpha-reviewers"]])
+                )
+
+                with patch("herald_scraper.rate_limit.time.sleep") as sleep:
+                    rows = client.run_query("SELECT 1")
+
+        sleep.assert_called_once_with(5.0)
+        assert rows == [{"reviewer_group": "alpha-reviewers"}]
+        assert post.call_count == 2
+
+    def test_persistent_rate_limit_raises(self, client: StmoClient) -> None:
+        with patch.object(client._session, "post") as post:
+            post.return_value = make_response(
+                status_code=429, headers={"retry-after": "1"}
+            )
+
+            with patch("herald_scraper.rate_limit.time.sleep"):
+                with pytest.raises(RateLimitError):
+                    client.run_query("SELECT 1")
+
+        assert post.call_count == MAX_RATE_LIMIT_RETRIES + 1
+
+    def test_rate_limited_403_is_retried_not_reported_as_bad_key(
+        self, client: StmoClient
+    ) -> None:
+        """A 403 with rate-limit headers must not be mistaken for a bad API key."""
+        with patch.object(client._session, "post") as post:
+            post.side_effect = [
+                make_response(
+                    status_code=403,
+                    headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1"},
+                ),
+                make_response(json_body=job(JOB_SUCCESS, query_result_id=99)),
+            ]
+            with patch.object(client._session, "get") as get:
+                get.return_value = make_response(
+                    json_body=query_result(["reviewer_group"], [["alpha-reviewers"]])
+                )
+
+                with patch("herald_scraper.rate_limit.time.sleep"):
+                    rows = client.run_query("SELECT 1")
+
+        assert rows == [{"reviewer_group": "alpha-reviewers"}]
+        assert post.call_count == 2

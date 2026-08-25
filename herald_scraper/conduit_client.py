@@ -1,11 +1,12 @@
 """Conduit API client for Phabricator."""
 
 import logging
-import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import requests
+
+from herald_scraper.rate_limit import raise_for_rate_limit, retry_on_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +37,19 @@ class ConduitClient:
         self,
         base_url: str,
         api_token: str,
-        delay: float = 1.0,
         timeout: float = 30.0,
         user_agent: str = "HeraldScraper/0.1",
     ) -> None:
         """
         Initialize the Conduit client.
 
+        Requests are not paced. The client runs at full speed and backs off
+        only when a response reports a rate limit (see
+        ``herald_scraper.rate_limit``).
+
         Args:
             base_url: Base URL of the Phabricator instance
             api_token: Conduit API token (from Settings -> Conduit API Tokens)
-            delay: Delay between requests in seconds (rate limiting)
             timeout: Request timeout in seconds
             user_agent: User-Agent string for requests
 
@@ -65,19 +68,9 @@ class ConduitClient:
 
         self.base_url = base_url.rstrip("/")
         self.api_token = api_token
-        self.delay = delay
         self.timeout = timeout
-        self._last_request_time: Optional[float] = None
         self._session = requests.Session()
         self._session.headers["User-Agent"] = user_agent
-
-    def _rate_limit(self) -> None:
-        """Apply rate limiting between requests."""
-        if self._last_request_time is not None:
-            elapsed = time.time() - self._last_request_time
-            if elapsed < self.delay:
-                time.sleep(self.delay - elapsed)
-        self._last_request_time = time.time()
 
     def _flatten_params(self, params: Any, data: Dict[str, str], prefix: str) -> None:
         """
@@ -109,6 +102,9 @@ class ConduitClient:
         """
         Call a Conduit API method.
 
+        A rate-limited response is waited out and retried; see
+        ``herald_scraper.rate_limit``.
+
         Args:
             method: API method name (e.g., 'project.search')
             params: Optional parameters for the API call
@@ -118,10 +114,18 @@ class ConduitClient:
 
         Raises:
             ConduitError: If the API returns an error
+            RateLimitError: If the rate limit persists across every retry
             requests.RequestException: If the HTTP request fails
         """
-        self._rate_limit()
+        return retry_on_rate_limit(
+            f"calling Conduit method {method}",
+            lambda: self._call_method_once(method, params),
+        )
 
+    def _call_method_once(
+        self, method: str, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Make a single attempt at a Conduit API call."""
         url = f"{self.base_url}/api/{method}"
 
         # Build form data with API token and flattened params
@@ -131,6 +135,7 @@ class ConduitClient:
 
         logger.debug(f"Calling Conduit method: {method}")
         response = self._session.post(url, data=data, timeout=self.timeout)
+        raise_for_rate_limit(response, f"calling Conduit method {method}")
         response.raise_for_status()
 
         result: Dict[str, Any] = response.json()

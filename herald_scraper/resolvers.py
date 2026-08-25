@@ -9,8 +9,10 @@ import time
 from typing import Dict, List, Optional, Set, Tuple
 
 from herald_scraper.conduit_client import ConduitClient
+from herald_scraper.exceptions import RateLimitError
 from herald_scraper.models import GitHubUser, Group, Rule, UnresolvedUser
 from herald_scraper.people_client import PeopleDirectoryClient
+from herald_scraper.rate_limit import MAX_RATE_LIMIT_RETRIES, rate_limit_backoff_seconds
 from herald_scraper.stmo_client import StmoClient
 
 logger = logging.getLogger(__name__)
@@ -448,6 +450,11 @@ class UsernameResolver:
 
         Uses caching to avoid duplicate lookups.
 
+        Lookups run at full speed; when PMO (or GitHub, which it proxies)
+        reports a rate limit, the lookup waits as long as the response asks
+        for and retries, up to ``MAX_RATE_LIMIT_RETRIES`` times. Only after
+        that does the user get recorded as unresolved.
+
         Args:
             username: Phabricator username (may include @domain)
 
@@ -486,13 +493,37 @@ class UsernameResolver:
             logger.debug(f"No PMO cookie, cannot resolve {lookup_name}")
             return None
 
-        try:
-            expected_bmo_id, expected_real_name = self._fetch_phab_info(lookup_name)
-            resolution = self.client.resolve_github(
-                lookup_name,
-                expected_bmo_id=expected_bmo_id,
-                expected_real_name=expected_real_name,
-            )
+        # Conduit, not PMO, so it stays outside the rate-limit retry loop.
+        expected_bmo_id, expected_real_name = self._fetch_phab_info(lookup_name)
+
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                resolution = self.client.resolve_github(
+                    lookup_name,
+                    expected_bmo_id=expected_bmo_id,
+                    expected_real_name=expected_real_name,
+                )
+            except RateLimitError as e:
+                if attempt >= MAX_RATE_LIMIT_RETRIES:
+                    self._unresolved[lookup_name] = "rate_limited"
+                    logger.error(
+                        f"Giving up on {lookup_name} after {attempt + 1} rate-limited "
+                        f"attempts: {e}"
+                    )
+                    return None
+                wait = rate_limit_backoff_seconds(e, attempt)
+                logger.warning(
+                    f"Rate limited resolving {lookup_name} "
+                    f"(attempt {attempt + 1}/{MAX_RATE_LIMIT_RETRIES + 1}); "
+                    f"waiting {wait:.0f}s before retrying: {e}"
+                )
+                time.sleep(wait)
+                continue
+            except Exception as e:
+                reason = f"error: {str(e)}"
+                self._unresolved[lookup_name] = reason
+                logger.warning(f"Error resolving {lookup_name}: {e}")
+                return None
 
             if resolution.username or resolution.user_id:
                 github_user = GitHubUser(username=resolution.username, user_id=resolution.user_id)
@@ -501,34 +532,30 @@ class UsernameResolver:
                     f"Resolved {lookup_name} -> {resolution.username} (ID: {resolution.user_id})"
                 )
                 return github_user
-            else:
-                self._unresolved[lookup_name] = resolution.reason or "unresolved"
-                logger.debug(
-                    f"Could not resolve {lookup_name}: {resolution.reason or 'unresolved'}"
-                )
-                return None
 
-        except Exception as e:
-            reason = f"error: {str(e)}"
-            self._unresolved[lookup_name] = reason
-            logger.warning(f"Error resolving {lookup_name}: {e}")
+            self._unresolved[lookup_name] = resolution.reason or "unresolved"
+            logger.debug(f"Could not resolve {lookup_name}: {resolution.reason or 'unresolved'}")
             return None
+
+        return None  # pragma: no cover - loop always returns or continues
 
     def resolve_all(
         self,
         rules: List[Rule],
         groups: Dict[str, Group],
         max_users: Optional[int] = None,
-        delay: float = 0.5,
     ) -> Tuple[Dict[str, GitHubUser], List[UnresolvedUser], bool]:
         """
         Resolve all usernames found in rules and groups.
+
+        Users are looked up back to back without artificial pacing;
+        ``resolve_username`` backs off only when a response reports a rate
+        limit.
 
         Args:
             rules: List of Rule objects
             groups: Dictionary of group slug to Group objects
             max_users: Optional limit on number of users to resolve
-            delay: Delay between API requests in seconds
 
         Returns:
             Tuple of (resolved_users dict, unresolved_users list, hit_max_users flag)
@@ -568,10 +595,6 @@ class UsernameResolver:
                 resolved_users[lookup_name] = github_user
 
             count += 1
-
-            # Rate limiting between requests (no requests without a client)
-            if delay and self.client is not None and count < len(all_refs):
-                time.sleep(delay)
 
         # Build unresolved users list with references
         unresolved_list: List[UnresolvedUser] = []
