@@ -2,7 +2,6 @@
 
 import logging
 import os
-import time
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
@@ -10,6 +9,7 @@ import requests
 
 
 from herald_scraper.exceptions import AuthenticationError
+from herald_scraper.rate_limit import raise_for_rate_limit, retry_on_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +21,19 @@ class HeraldClient:
         self,
         base_url: str,
         session_cookie: Optional[str] = None,
-        delay: float = 1.0,
         user_agent: str = "HeraldScraper/0.1",
         timeout: float = 30.0,
     ) -> None:
         """
         Initialize the Herald client.
 
+        Requests are not paced. The client runs at full speed and backs off
+        only when a response reports a rate limit (see
+        ``herald_scraper.rate_limit``).
+
         Args:
             base_url: Base URL of the Phabricator instance
             session_cookie: Optional session cookie for authentication
-            delay: Delay between requests in seconds (rate limiting)
             user_agent: User-Agent string for requests
             timeout: Request timeout in seconds (default: 30.0)
 
@@ -47,10 +49,8 @@ class HeraldClient:
 
         self.base_url = base_url.rstrip("/")
         self.session_cookie = session_cookie
-        self.delay = delay
         self.user_agent = user_agent
         self.timeout = timeout
-        self._last_request_time: Optional[float] = None
         self._session = requests.Session()
         self._session.headers["User-Agent"] = user_agent
         if session_cookie:
@@ -68,17 +68,12 @@ class HeraldClient:
                 domain=cookie_domain,
             )
 
-    def _rate_limit(self) -> None:
-        """Apply rate limiting between requests."""
-        if self._last_request_time is not None:
-            elapsed = time.time() - self._last_request_time
-            if elapsed < self.delay:
-                time.sleep(self.delay - elapsed)
-        self._last_request_time = time.time()
-
     def fetch_page(self, url: str) -> str:
         """
         Fetch a page and return its HTML content.
+
+        A rate-limited response is waited out and retried; see
+        ``herald_scraper.rate_limit``.
 
         Args:
             url: Full URL or path to fetch
@@ -88,10 +83,13 @@ class HeraldClient:
 
         Raises:
             AuthenticationError: If authentication fails
+            RateLimitError: If the rate limit persists across every retry
             requests.RequestException: If the request fails
         """
-        self._rate_limit()
+        return retry_on_rate_limit(f"fetching {url}", lambda: self._fetch_page_once(url))
 
+    def _fetch_page_once(self, url: str) -> str:
+        """Make a single attempt at fetching a page."""
         if url.startswith("/"):
             full_url = f"{self.base_url}{url}"
         else:
@@ -110,6 +108,7 @@ class HeraldClient:
                 location = f"{self.base_url}{location}"
             response = self._session.get(location, timeout=self.timeout)
 
+        raise_for_rate_limit(response, f"fetching {full_url}")
         response.raise_for_status()
 
         # Check for login page returned with 200 OK (Phabricator sometimes
@@ -178,7 +177,6 @@ class HeraldClient:
         Reads configuration from:
             - PHABRICATOR_URL: Base URL of the Phabricator instance (required)
             - PHABRICATOR_SESSION_COOKIE: Session cookie for authentication
-            - HERALD_SCRAPER_DELAY: Optional delay between requests (default: 1.0)
             - HERALD_SCRAPER_USER_AGENT: Optional custom user agent
             - HERALD_SCRAPER_TIMEOUT: Optional request timeout (default: 30.0)
 
@@ -199,11 +197,6 @@ class HeraldClient:
         session_cookie = os.environ.get("PHABRICATOR_SESSION_COOKIE")
 
         try:
-            delay = float(os.environ.get("HERALD_SCRAPER_DELAY", "1.0"))
-        except ValueError as e:
-            raise ValueError(f"HERALD_SCRAPER_DELAY must be a number: {e}") from e
-
-        try:
             timeout = float(os.environ.get("HERALD_SCRAPER_TIMEOUT", "30.0"))
         except ValueError as e:
             raise ValueError(f"HERALD_SCRAPER_TIMEOUT must be a number: {e}") from e
@@ -213,7 +206,6 @@ class HeraldClient:
         return cls(
             base_url=base_url,
             session_cookie=session_cookie,
-            delay=delay,
             user_agent=user_agent,
             timeout=timeout,
         )

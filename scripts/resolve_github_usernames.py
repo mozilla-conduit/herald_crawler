@@ -37,11 +37,8 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from herald_scraper.exceptions import RateLimitError
-from herald_scraper.people_client import (
-    MAX_RATE_LIMIT_RETRIES,
-    PeopleDirectoryClient,
-    rate_limit_backoff_seconds,
-)
+from herald_scraper.people_client import PeopleDirectoryClient
+from herald_scraper.rate_limit import MAX_RATE_LIMIT_RETRIES, rate_limit_backoff_seconds
 
 
 class GitHubUsernameResolver:

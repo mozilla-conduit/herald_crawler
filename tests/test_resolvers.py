@@ -4,7 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from herald_scraper.exceptions import RateLimitError
 from herald_scraper.models import Action, GitHubUser, Group, Reviewer, Rule
+from herald_scraper.people_client import GitHubResolution
+from herald_scraper.rate_limit import MAX_RATE_LIMIT_RETRIES
 from herald_scraper.resolvers import UsernameResolver, _clean_phab_real_name
 
 
@@ -229,7 +232,7 @@ class TestUsernameResolver:
         mock_people_client.resolve_github.side_effect = mock_resolve
 
         github_users, unresolved, hit_max = resolver.resolve_all(
-            sample_rules, sample_groups, delay=0
+            sample_rules, sample_groups
         )
 
         # Should resolve users from both rules and groups
@@ -253,7 +256,7 @@ class TestUsernameResolver:
         mock_people_client.resolve_github.side_effect = mock_resolve
 
         github_users, unresolved, hit_max = resolver.resolve_all(
-            sample_rules, sample_groups, delay=0
+            sample_rules, sample_groups
         )
 
         # Only alice should be resolved
@@ -297,7 +300,7 @@ class TestUsernameResolver:
 
         mock_people_client.resolve_github.side_effect = mock_resolve
 
-        github_users, unresolved, hit_max = resolver.resolve_all(rules, {}, max_users=2, delay=0)
+        github_users, unresolved, hit_max = resolver.resolve_all(rules, {}, max_users=2)
 
         # Should only resolve 2 users
         assert len(github_users) == 2
@@ -306,7 +309,7 @@ class TestUsernameResolver:
 
     def test_resolve_all_empty_inputs(self, resolver, mock_people_client):
         """Test resolving with empty rules and groups."""
-        github_users, unresolved, hit_max = resolver.resolve_all([], {}, delay=0)
+        github_users, unresolved, hit_max = resolver.resolve_all([], {})
 
         assert github_users == {}
         assert unresolved == []
@@ -578,7 +581,7 @@ class TestUsernameResolverWithoutPeopleClient:
         )
 
         resolved, unresolved, hit_max = resolver.resolve_all(
-            [self._rule("mappeduser")], {}, delay=0
+            [self._rule("mappeduser")], {}
         )
 
         assert resolved["mappeduser"].username == "mapped-gh"
@@ -589,7 +592,7 @@ class TestUsernameResolverWithoutPeopleClient:
         resolver = UsernameResolver(None)
 
         resolved, unresolved, _ = resolver.resolve_all(
-            [self._rule("ruleauthor", "someuser")], {}, delay=0
+            [self._rule("ruleauthor", "someuser")], {}
         )
 
         assert resolved == {}
@@ -604,7 +607,7 @@ class TestUsernameResolverWithoutPeopleClient:
             )
         }
 
-        _, unresolved, _ = resolver.resolve_all([self._rule("ruleauthor")], groups, delay=0)
+        _, unresolved, _ = resolver.resolve_all([self._rule("ruleauthor")], groups)
 
         by_name = {u.phabricator_username: u for u in unresolved}
         assert by_name["memberone"].referenced_in == ["group:alpha-reviewers"]
@@ -614,6 +617,101 @@ class TestUsernameResolverWithoutPeopleClient:
         rule = self._rule("ruleauthor", "usera", "userb")
 
         with patch("herald_scraper.resolvers.time.sleep") as sleep:
-            resolver.resolve_all([rule], {}, delay=5.0)
+            resolver.resolve_all([rule], {})
 
         sleep.assert_not_called()
+
+
+class TestUsernameResolverRateLimit:
+    """Rate-limited PMO lookups are retried, not recorded as failures."""
+
+    @staticmethod
+    def _resolver(client: MagicMock) -> UsernameResolver:
+        return UsernameResolver(client)
+
+    @staticmethod
+    def _client() -> MagicMock:
+        return MagicMock()
+
+    def test_waits_and_retries_the_whole_lookup(self):
+        client = self._client()
+        client.resolve_github.side_effect = [
+            RateLimitError("limited", retry_after=20.0),
+            GitHubResolution(username="alice-gh", user_id=12345),
+        ]
+        resolver = self._resolver(client)
+
+        with patch("herald_scraper.resolvers.time.sleep") as sleep:
+            github_user = resolver.resolve_username("alice@mozilla.com")
+
+        sleep.assert_called_once_with(20.0)
+        assert github_user.username == "alice-gh"
+        assert "alice" not in resolver._unresolved
+
+    def test_hintless_limit_backs_off_exponentially(self):
+        client = self._client()
+        client.resolve_github.side_effect = [
+            RateLimitError("limited"),
+            RateLimitError("limited"),
+            GitHubResolution(username="alice-gh", user_id=12345),
+        ]
+        resolver = self._resolver(client)
+
+        with patch("herald_scraper.resolvers.time.sleep") as sleep:
+            assert resolver.resolve_username("alice") is not None
+
+        assert [call.args[0] for call in sleep.call_args_list] == [60.0, 120.0]
+
+    def test_gives_up_after_max_retries(self):
+        client = self._client()
+        client.resolve_github.side_effect = RateLimitError("limited", retry_after=1.0)
+        resolver = self._resolver(client)
+
+        with patch("herald_scraper.resolvers.time.sleep") as sleep:
+            assert resolver.resolve_username("alice") is None
+
+        assert client.resolve_github.call_count == MAX_RATE_LIMIT_RETRIES + 1
+        assert sleep.call_count == MAX_RATE_LIMIT_RETRIES
+        assert resolver._unresolved["alice"] == "rate_limited"
+
+    def test_rate_limited_user_is_not_confused_with_a_real_failure(self):
+        """"rate_limited" is distinct from the PMO reasons, so a resume retries it."""
+        client = self._client()
+        client.resolve_github.side_effect = RateLimitError("limited", retry_after=0.0)
+        resolver = self._resolver(client)
+
+        with patch("herald_scraper.resolvers.time.sleep"):
+            _, unresolved, _ = resolver.resolve_all(
+                [
+                    Rule(
+                        id="H420",
+                        name="Test Rule",
+                        author="alice@mozilla.com",
+                        status="active",
+                        type="differential-revision",
+                    )
+                ],
+                {},
+            )
+
+        assert [u.reason for u in unresolved] == ["rate_limited"]
+
+    def test_phab_info_is_fetched_once_across_retries(self):
+        """The Conduit cross-check is not re-run for every rate-limit retry."""
+        client = self._client()
+        client.resolve_github.side_effect = [
+            RateLimitError("limited", retry_after=0.0),
+            GitHubResolution(username="alice-gh", user_id=12345),
+        ]
+        conduit = MagicMock()
+        conduit.user_search.return_value = [
+            {"phid": "PHID-USER-1", "fields": {"realName": "Aaa Bbb"}}
+        ]
+        conduit.bugzilla_account_search.return_value = [{"id": 91159}]
+        resolver = UsernameResolver(client, conduit_client=conduit)
+
+        with patch("herald_scraper.resolvers.time.sleep"):
+            assert resolver.resolve_username("alice") is not None
+
+        conduit.user_search.assert_called_once()
+        assert client.resolve_github.call_count == 2

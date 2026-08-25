@@ -19,6 +19,8 @@ class RateLimitError(HeraldScraperError):
     no usable hint, leaving the wait up to the caller.
     """
 
+    retry_after: Optional[float]
+
     def __init__(self, message: str, retry_after: Optional[float] = None) -> None:
         self.retry_after = retry_after
         super().__init__(message)

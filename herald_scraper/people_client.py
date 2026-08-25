@@ -1,13 +1,12 @@
 """Client for Mozilla People Directory API."""
 
 import logging
-import time
 import unicodedata
 from typing import NamedTuple, Optional
 
 import requests
 
-from herald_scraper.exceptions import RateLimitError
+from herald_scraper.rate_limit import raise_for_rate_limit
 
 
 class GitHubResolution(NamedTuple):
@@ -41,20 +40,6 @@ logger = logging.getLogger(__name__)
 PMO_GRAPHQL_URL = "https://people.mozilla.org/api/v4/graphql"
 PMO_GITHUB_USERNAME_URL = "https://people.mozilla.org/whoami/github/username/{github_id}"
 PMO_SEARCH_SIMPLE_URL = "https://people.mozilla.org/api/v4/search/simple/"
-
-# PMO's /whoami/github/ endpoint proxies GitHub, so GitHub's rate limits can
-# surface here. GitHub signals both its primary and secondary rate limits with
-# either status code:
-# https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
-RATE_LIMIT_STATUS_CODES = (403, 429)
-
-# GitHub's documented floor for a secondary rate limit that carries no explicit
-# retry hint: "Otherwise, wait for at least one minute before retrying."
-DEFAULT_RATE_LIMIT_WAIT = 60.0
-
-# "throw an error after a specific number of retries" — with the exponential
-# growth below this bounds a single lookup at 60+120+240+480s of waiting.
-MAX_RATE_LIMIT_RETRIES = 4
 
 GITHUB_ID_QUERY = """
 query GetGitHubId($username: String) {
@@ -105,15 +90,12 @@ class PeopleDirectoryClient:
     def _check_response(response: requests.Response, what: str) -> None:
         """Raise on an error response, telling rate limits apart from failures.
 
-        Rate limits become ``RateLimitError`` so the caller can wait and retry
-        instead of recording the user as permanently unresolved.
+        Rate limits become ``RateLimitError`` so ``UsernameResolver`` can wait
+        and retry the whole lookup instead of recording the user as
+        permanently unresolved. PMO's ``/whoami/github/`` endpoint proxies
+        GitHub, so GitHub's own limits surface through it.
         """
-        wait = rate_limit_wait_seconds(response)
-        if wait is not None:
-            raise RateLimitError(
-                f"Rate limited (HTTP {response.status_code}) while {what}",
-                retry_after=wait,
-            )
+        raise_for_rate_limit(response, what)
         response.raise_for_status()
 
     def get_github_id(self, username: str) -> dict:
@@ -385,84 +367,6 @@ class PeopleDirectoryClient:
             GitHub username if found, None otherwise
         """
         return self.resolve_github(username).username
-
-
-def rate_limit_wait_seconds(response: requests.Response) -> Optional[float]:
-    """How long to wait before retrying a rate-limited response.
-
-    Implements GitHub's documented order of precedence for both the primary
-    and the secondary rate limit:
-
-    1. ``retry-after`` present -> wait that many seconds.
-    2. ``x-ratelimit-remaining`` is ``0`` -> wait until ``x-ratelimit-reset``
-       (UTC epoch seconds).
-    3. Otherwise -> wait at least one minute.
-
-    Returns None when the response is not a rate limit, so the caller can
-    fail fast. A bare 403 with none of the signals above is far more likely
-    an expired ``pmo-access`` cookie than a rate limit, and retrying that
-    would just spin; 429 always means rate limited.
-    """
-    if response.status_code not in RATE_LIMIT_STATUS_CODES:
-        return None
-
-    retry_after = _parse_seconds(response.headers.get("retry-after"))
-    if retry_after is not None:
-        return max(0.0, retry_after)
-
-    if (response.headers.get("x-ratelimit-remaining") or "").strip() == "0":
-        reset = _parse_seconds(response.headers.get("x-ratelimit-reset"))
-        if reset is None:
-            return DEFAULT_RATE_LIMIT_WAIT
-        return max(0.0, reset - time.time())
-
-    if response.status_code == 429 or _mentions_rate_limit(response):
-        return DEFAULT_RATE_LIMIT_WAIT
-
-    return None
-
-
-def rate_limit_backoff_seconds(error: RateLimitError, attempt: int) -> float:
-    """How long to wait before retry ``attempt`` (0-based) of a rate-limited call.
-
-    An explicit hint from the response is authoritative — GitHub tells us not
-    to retry before it elapses, and inflating it would only idle longer than
-    needed. The "wait at least a minute" fallback is the one that grows
-    exponentially, per "if your request continues to fail due to a secondary
-    rate limit, wait for an exponentially increasing amount of time between
-    retries".
-    """
-    if error.retry_after is not None:
-        return error.retry_after
-    return DEFAULT_RATE_LIMIT_WAIT * (2**attempt)
-
-
-def _parse_seconds(value: Optional[str]) -> Optional[float]:
-    """Parse a numeric header value, or None if absent/not a number.
-
-    GitHub sends ``retry-after`` as an integer number of seconds rather than
-    the HTTP-date the RFC also allows, so anything non-numeric is treated as
-    "no hint" and falls through to the next signal.
-    """
-    if value is None:
-        return None
-    try:
-        return float(value.strip())
-    except (AttributeError, ValueError):
-        return None
-
-
-def _mentions_rate_limit(response: requests.Response) -> bool:
-    """Whether the response body names a rate limit.
-
-    Secondary rate limits are only distinguishable from an ordinary 403 by
-    "an error message that indicates that you exceeded a secondary rate
-    limit", so fall back to sniffing the body.
-    """
-    try:
-        return "rate limit" in response.text.lower()
-    except Exception:  # pragma: no cover - defensive, decoding a body
-        return False
 
 
 def extract_github_id(response: dict) -> Optional[str]:

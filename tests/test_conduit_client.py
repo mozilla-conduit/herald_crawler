@@ -9,6 +9,8 @@ import pytest
 import requests
 
 from herald_scraper.conduit_client import ConduitClient, ConduitError
+from herald_scraper.exceptions import RateLimitError
+from herald_scraper.rate_limit import MAX_RATE_LIMIT_RETRIES
 
 # --- Fixtures ---
 
@@ -63,7 +65,6 @@ def conduit_client() -> ConduitClient:
     return ConduitClient(
         base_url="https://phabricator.example.com",
         api_token="api-test-token",
-        delay=0,  # No delay for tests
     )
 
 
@@ -81,7 +82,6 @@ class TestConduitClientInit:
         )
         assert client.base_url == "https://phabricator.example.com"
         assert client.api_token == "api-xxxxx"
-        assert client.delay == 1.0  # default
         assert client.timeout == 30.0  # default
 
     def test_strips_trailing_slash(self) -> None:
@@ -110,11 +110,9 @@ class TestConduitClientInit:
         client = ConduitClient(
             base_url="https://phabricator.example.com",
             api_token="api-xxxxx",
-            delay=2.5,
             timeout=60.0,
             user_agent="TestAgent/1.0",
         )
-        assert client.delay == 2.5
         assert client.timeout == 60.0
 
 
@@ -331,3 +329,48 @@ class TestConduitClientBugzillaAccountSearch:
     def test_no_constraints_raises(self, conduit_client: ConduitClient) -> None:
         with pytest.raises(ValueError, match="ids.*phids"):
             conduit_client.bugzilla_account_search()
+
+
+class TestConduitClientRateLimit:
+    """Conduit calls back off on a rate limit instead of failing."""
+
+    @staticmethod
+    def _limited_response(retry_after: str, status_code: int = 429) -> MagicMock:
+        response = MagicMock()
+        response.status_code = status_code
+        response.headers = {"retry-after": retry_after}
+        response.text = ""
+        return response
+
+    def test_call_method_retries_after_rate_limit(
+        self, conduit_client: ConduitClient, project_search_response: Dict[str, Any]
+    ) -> None:
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.headers = {}
+        ok.json.return_value = project_search_response
+
+        with patch.object(conduit_client, "_session") as mock_session:
+            mock_session.post.side_effect = [
+                self._limited_response("3"),
+                ok,
+            ]
+
+            with patch("herald_scraper.rate_limit.time.sleep") as sleep:
+                result = conduit_client.call_method("project.search", {})
+
+        sleep.assert_called_once_with(3.0)
+        assert result == project_search_response["result"]
+        assert mock_session.post.call_count == 2
+
+    def test_call_method_gives_up_after_max_retries(
+        self, conduit_client: ConduitClient
+    ) -> None:
+        with patch.object(conduit_client, "_session") as mock_session:
+            mock_session.post.return_value = self._limited_response("1")
+
+            with patch("herald_scraper.rate_limit.time.sleep"):
+                with pytest.raises(RateLimitError):
+                    conduit_client.call_method("project.search", {})
+
+        assert mock_session.post.call_count == MAX_RATE_LIMIT_RETRIES + 1

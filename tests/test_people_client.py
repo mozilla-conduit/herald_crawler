@@ -155,7 +155,6 @@ class TestPeopleDirectoryClient:
     def test_client_initialization(self):
         """Test client initializes with cookie."""
         client = PeopleDirectoryClient(cookie="test-cookie")
-        assert client.delay == 0.5
         # Cookie should be set on session
         cookie = client._session.cookies.get("pmo-access", domain=".mozilla.org")
         assert cookie == "test-cookie"
@@ -188,7 +187,7 @@ class TestPeopleDirectoryClient:
 
     def test_resolve_github_username_user_not_found(self):
         """Test resolution when user doesn't exist."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         graphql_response = MagicMock()
@@ -212,7 +211,7 @@ class TestPeopleDirectoryClient:
 
     def test_resolve_github_reason_pmo_profile_not_found(self):
         """Profile miss + no fallback match -> reason='pmo_profile_not_found'."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         miss = MagicMock()
@@ -232,7 +231,7 @@ class TestPeopleDirectoryClient:
 
     def test_resolve_github_reason_no_github_linked(self):
         """Profile found but githubIdV3 null -> reason='no_github_linked'."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         hit = MagicMock()
@@ -251,7 +250,7 @@ class TestPeopleDirectoryClient:
 
     def test_resolve_github_reason_bmo_id_mismatch(self):
         """BMO id disagreement -> reason='bmo_id_mismatch'."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         hit = MagicMock()
@@ -293,7 +292,7 @@ class TestPeopleDirectoryClient:
 
     def test_resolve_github_username_case_insensitive_fallback(self):
         """When PMO case differs from Phabricator, fall back to search/simple."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         # First GraphQL call: lowercase lookup misses.
@@ -333,7 +332,7 @@ class TestPeopleDirectoryClient:
 
     def test_resolve_github_real_name_search_fallback(self):
         """If the username-based search returns nothing useful, retry with realName."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         # First GraphQL lookup misses (no profile by Phab username).
@@ -384,7 +383,7 @@ class TestPeopleDirectoryClient:
 
     def test_resolve_github_username_search_no_match(self):
         """Case-insensitive fallback returns None when search surfaces no match."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         miss_response = MagicMock()
@@ -708,7 +707,7 @@ class TestSearchSimpleFixture:
         """Client hits the simple search URL with the right params and returns parsed JSON."""
         from herald_scraper.people_client import PMO_SEARCH_SIMPLE_URL
 
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
         mocked = MagicMock()
         mocked.json.return_value = search_response
@@ -727,7 +726,7 @@ class TestSearchSimpleFixture:
 
         Mirrors phab_alias in Phab / pmo_canonical in PMO, both owned by BMO id 91159.
         """
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         # Initial GraphQL miss on the Phab username.
@@ -788,7 +787,7 @@ class TestSearchSimpleFixture:
 
     def test_resolve_github_bmo_id_skips_non_matching_candidates(self):
         """When none of the search dinos carry the expected BMO id, give up."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         miss = MagicMock()
@@ -825,7 +824,7 @@ class TestSearchSimpleFixture:
 
     def test_resolve_github_real_name_fallback_picks_correct_dino(self):
         """txia: 3 candidates, only Xyz Abc's real name matches Phab's realName."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         miss = MagicMock()
@@ -905,7 +904,7 @@ class TestSearchSimpleFixture:
         id is null, so the retry surfaces `no_github_linked` with the right
         canonical username in the logs.
         """
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         miss = MagicMock()
@@ -955,7 +954,7 @@ class TestSearchSimpleFixture:
 
     def test_resolve_github_real_name_fallback_skipped_when_bmo_match_succeeds(self):
         """BMO-id match must win over real-name match when both are available."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         miss = MagicMock()
@@ -996,7 +995,7 @@ class TestSearchSimpleFixture:
 
     def test_resolve_github_bmo_id_fallback_requires_expected_id(self):
         """Without expected_bmo_id, divergent usernames stay unresolved."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         miss = MagicMock()
@@ -1015,7 +1014,7 @@ class TestSearchSimpleFixture:
 
     def test_resolve_github_verifies_bmo_id(self, search_response):
         """When expected_bmo_id is provided, the resolver confirms it against PMO."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         github_hit = MagicMock()
@@ -1047,7 +1046,7 @@ class TestSearchSimpleFixture:
         is null while Phab's bugzilla.account.search reports an id. No
         contradiction, so we keep the resolution.
         """
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         github_hit = MagicMock()
@@ -1072,7 +1071,7 @@ class TestSearchSimpleFixture:
 
     def test_resolve_github_rejects_on_bmo_id_mismatch(self, search_response):
         """A mismatched BMO id drops the resolution and skips the REST lookup."""
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         github_hit = MagicMock()
@@ -1101,7 +1100,7 @@ class TestSearchSimpleFixture:
             "fixture username must be mixed-case to exercise the fallback"
         )
 
-        client = PeopleDirectoryClient(cookie="test-cookie", delay=0)
+        client = PeopleDirectoryClient(cookie="test-cookie")
         client._session = MagicMock()
 
         miss = MagicMock()

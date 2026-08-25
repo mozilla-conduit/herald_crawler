@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from herald_scraper.rate_limit import raise_for_rate_limit, retry_on_rate_limit
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_STMO_URL = "https://sql.telemetry.mozilla.org"
@@ -279,11 +281,19 @@ class StmoClient:
 
     def _get(self, path: str) -> Dict[str, Any]:
         """GET a Redash endpoint and return the decoded JSON body."""
+        return retry_on_rate_limit(f"getting {path}", lambda: self._get_once(path))
+
+    def _get_once(self, path: str) -> Dict[str, Any]:
+        """Make a single GET attempt against a Redash endpoint."""
         response = self._session.get(f"{self.base_url}{path}", timeout=self.timeout)
         return self._decode(response, path)
 
     def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """POST JSON to a Redash endpoint and return the decoded JSON body."""
+        return retry_on_rate_limit(f"posting to {path}", lambda: self._post_once(path, payload))
+
+    def _post_once(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Make a single POST attempt against a Redash endpoint."""
         response = self._session.post(
             f"{self.base_url}{path}", json=payload, timeout=self.timeout
         )
@@ -297,7 +307,12 @@ class StmoClient:
         return body
 
     def _decode_body(self, response: requests.Response, path: str) -> Any:
-        """Decode a Redash JSON response, mapping auth failures to StmoError."""
+        """Decode a Redash JSON response, mapping auth failures to StmoError.
+
+        Rate limits are split out first: a 403 that carries rate-limit
+        signals is transient and worth retrying, unlike a rejected API key.
+        """
+        raise_for_rate_limit(response, f"requesting {path}")
         if response.status_code in (401, 403):
             raise StmoError(
                 f"STMO rejected the API key for {path} (HTTP {response.status_code}). "

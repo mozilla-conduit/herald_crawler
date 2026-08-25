@@ -96,14 +96,6 @@ def main() -> int:
         help="Only fetch the first page of rules (equivalent to --max-pages 1)",
     )
     parser.add_argument(
-        "--delay",
-        type=float,
-        default=1.0,
-        help="Delay between Phabricator requests in seconds (default: 1.0). "
-        "People Directory lookups are not paced; they back off only when a "
-        "response reports a rate limit.",
-    )
-    parser.add_argument(
         "--timeout",
         type=float,
         default=30.0,
@@ -209,7 +201,6 @@ def main() -> int:
             client = HeraldClient(
                 base_url=args.url,
                 session_cookie=args.phab_cookie,
-                delay=args.delay,
                 timeout=args.timeout,
             )
         else:
@@ -244,7 +235,6 @@ def main() -> int:
                 conduit_client = ConduitClient(
                     base_url=base_url,
                     api_token=conduit_token,
-                    delay=args.delay,
                     timeout=args.timeout,
                 )
                 logger.info("Using Conduit API to cross-check GitHub resolution")

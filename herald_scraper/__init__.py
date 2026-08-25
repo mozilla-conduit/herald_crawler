@@ -4,6 +4,7 @@ __version__ = "0.1.0"
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.conduit_client import ConduitClient, ConduitError
+from herald_scraper.exceptions import RateLimitError
 from herald_scraper.models import (
     Action,
     Condition,
@@ -29,6 +30,7 @@ __all__ = [
     "HeraldClient",
     "HeraldRulesOutput",
     "Metadata",
+    "RateLimitError",
     "Reviewer",
     "Rule",
     "ScrapeStatus",

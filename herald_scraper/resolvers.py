@@ -11,11 +11,8 @@ from typing import Dict, List, Optional, Set, Tuple
 from herald_scraper.conduit_client import ConduitClient
 from herald_scraper.exceptions import RateLimitError
 from herald_scraper.models import GitHubUser, Group, Rule, UnresolvedUser
-from herald_scraper.people_client import (
-    MAX_RATE_LIMIT_RETRIES,
-    PeopleDirectoryClient,
-    rate_limit_backoff_seconds,
-)
+from herald_scraper.people_client import PeopleDirectoryClient
+from herald_scraper.rate_limit import MAX_RATE_LIMIT_RETRIES, rate_limit_backoff_seconds
 from herald_scraper.stmo_client import StmoClient
 
 logger = logging.getLogger(__name__)

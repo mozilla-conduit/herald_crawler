@@ -4,10 +4,12 @@ import os
 from unittest.mock import patch
 
 import pytest
+import requests
 import responses
 
 from herald_scraper.client import HeraldClient
-from herald_scraper.exceptions import AuthenticationError
+from herald_scraper.exceptions import AuthenticationError, RateLimitError
+from herald_scraper.rate_limit import MAX_RATE_LIMIT_RETRIES
 
 
 class TestHeraldClientInit:
@@ -18,12 +20,10 @@ class TestHeraldClientInit:
         client = HeraldClient(
             base_url="https://phabricator.example.com",
             session_cookie="phsid=abc123",
-            delay=0.5,
             user_agent="TestAgent/1.0",
         )
         assert client.base_url == "https://phabricator.example.com"
         assert client.session_cookie == "phsid=abc123"
-        assert client.delay == 0.5
         assert client.user_agent == "TestAgent/1.0"
 
     def test_init_cookie_domain_extracted_from_url(self) -> None:
@@ -63,7 +63,6 @@ class TestHeraldClientInit:
         )
         assert client.base_url == "https://phabricator.example.com"
         assert client.session_cookie is None
-        assert client.delay == 1.0  # default
         assert client.user_agent == "HeraldScraper/0.1"  # default
 
     def test_init_from_environment(self) -> None:
@@ -73,14 +72,12 @@ class TestHeraldClientInit:
             {
                 "PHABRICATOR_URL": "https://phabricator.env.com",
                 "PHABRICATOR_SESSION_COOKIE": "phsid=env123",
-                "HERALD_SCRAPER_DELAY": "2.0",
                 "HERALD_SCRAPER_USER_AGENT": "EnvAgent/1.0",
             },
         ):
             client = HeraldClient.from_environment()
             assert client.base_url == "https://phabricator.env.com"
             assert client.session_cookie == "phsid=env123"
-            assert client.delay == 2.0
             assert client.user_agent == "EnvAgent/1.0"
 
     def test_init_from_environment_defaults(self) -> None:
@@ -95,7 +92,6 @@ class TestHeraldClientInit:
             client = HeraldClient.from_environment()
             assert client.base_url == "https://phabricator.env.com"
             assert client.session_cookie is None
-            assert client.delay == 1.0
             assert client.user_agent == "HeraldScraper/0.1"
 
     def test_init_invalid_url_raises_error(self) -> None:
@@ -116,17 +112,17 @@ class TestHeraldClientInit:
             ):
                 HeraldClient.from_environment()
 
-    def test_from_environment_invalid_delay_raises_error(self) -> None:
-        """Test that invalid HERALD_SCRAPER_DELAY raises ValueError."""
+    def test_from_environment_invalid_timeout_raises_error(self) -> None:
+        """Test that invalid HERALD_SCRAPER_TIMEOUT raises ValueError."""
         with patch.dict(
             os.environ,
             {
                 "PHABRICATOR_URL": "https://phabricator.env.com",
-                "HERALD_SCRAPER_DELAY": "not-a-number",
+                "HERALD_SCRAPER_TIMEOUT": "not-a-number",
             },
             clear=True,
         ):
-            with pytest.raises(ValueError, match="HERALD_SCRAPER_DELAY must be a number"):
+            with pytest.raises(ValueError, match="HERALD_SCRAPER_TIMEOUT must be a number"):
                 HeraldClient.from_environment()
 
 
@@ -166,31 +162,87 @@ class TestHeraldClientFetch:
             client.fetch_page("/H420")
 
     @responses.activate
-    def test_fetch_page_rate_limiting(self) -> None:
-        """Test that requests respect rate limiting delay."""
-        responses.add(
-            responses.GET,
-            "https://phabricator.example.com/page1",
-            body="<html>page1</html>",
-            status=200,
-        )
-        responses.add(
-            responses.GET,
-            "https://phabricator.example.com/page2",
-            body="<html>page2</html>",
-            status=200,
-        )
+    def test_fetch_page_does_not_pace_requests(self) -> None:
+        """Successive fetches run back to back, with no sleep between them."""
+        for page in ("page1", "page2"):
+            responses.add(
+                responses.GET,
+                f"https://phabricator.example.com/{page}",
+                body=f"<html>{page}</html>",
+                status=200,
+            )
 
-        client = HeraldClient(
-            base_url="https://phabricator.example.com",
-            delay=0.1,
-        )
+        client = HeraldClient(base_url="https://phabricator.example.com")
 
-        client.fetch_page("/page1")
-        client.fetch_page("/page2")
+        with patch("herald_scraper.rate_limit.time.sleep") as sleep:
+            client.fetch_page("/page1")
+            client.fetch_page("/page2")
 
-        # Both requests should succeed
         assert len(responses.calls) == 2
+        sleep.assert_not_called()
+
+    @responses.activate
+    def test_fetch_page_waits_out_rate_limit_then_retries(self) -> None:
+        """A 429 with retry-after is waited out and the fetch retried."""
+        responses.add(
+            responses.GET,
+            "https://phabricator.example.com/H420",
+            body="slow down",
+            status=429,
+            headers={"retry-after": "7"},
+        )
+        responses.add(
+            responses.GET,
+            "https://phabricator.example.com/H420",
+            body="<html>ok</html>",
+            status=200,
+        )
+
+        client = HeraldClient(base_url="https://phabricator.example.com")
+
+        with patch("herald_scraper.rate_limit.time.sleep") as sleep:
+            assert client.fetch_page("/H420") == "<html>ok</html>"
+
+        sleep.assert_called_once_with(7.0)
+
+    @responses.activate
+    def test_fetch_page_gives_up_after_max_retries(self) -> None:
+        """A rate limit that never clears surfaces as an error, not a bad page."""
+        for _ in range(MAX_RATE_LIMIT_RETRIES + 1):
+            responses.add(
+                responses.GET,
+                "https://phabricator.example.com/H420",
+                body="slow down",
+                status=429,
+                headers={"retry-after": "1"},
+            )
+
+        client = HeraldClient(base_url="https://phabricator.example.com")
+
+        with patch("herald_scraper.rate_limit.time.sleep"):
+            with pytest.raises(RateLimitError):
+                client.fetch_page("/H420")
+
+        assert len(responses.calls) == MAX_RATE_LIMIT_RETRIES + 1
+
+    @responses.activate
+    def test_fetch_page_plain_403_is_not_retried(self) -> None:
+        """A 403 with no rate-limit signal is a hard failure, not a wait."""
+        responses.add(
+            responses.GET,
+            "https://phabricator.example.com/H420",
+            body="nope",
+            status=403,
+        )
+
+        client = HeraldClient(base_url="https://phabricator.example.com")
+
+        with patch("herald_scraper.rate_limit.time.sleep") as sleep:
+            with pytest.raises(requests.HTTPError):
+                client.fetch_page("/H420")
+
+        assert len(responses.calls) == 1
+        sleep.assert_not_called()
 
     @responses.activate
     def test_fetch_listing(self, listing_html: str) -> None:

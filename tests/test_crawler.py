@@ -907,7 +907,6 @@ class TestResumeFromExistingOutput:
         mock_client.fetch_listing.return_value = "<html><body></body></html>"
 
         mock_people_client = Mock()
-        mock_people_client.delay = 0
         mock_people_client.resolve_github.return_value = GitHubResolution(
             username="alice-gh", user_id=12345, reason=None
         )
@@ -933,7 +932,6 @@ class TestResumeFromExistingOutput:
         mock_client.fetch_listing.return_value = "<html><body></body></html>"
 
         mock_people_client = Mock()
-        mock_people_client.delay = 0
         mock_people_client.resolve_github.return_value = GitHubResolution(
             username=None, user_id=None, reason="pmo_profile_not_found"
         )
@@ -980,7 +978,6 @@ class TestResumeFromExistingOutput:
         mock_client.fetch_listing.return_value = "<html><body></body></html>"
 
         mock_people_client = Mock()
-        mock_people_client.delay = 0
 
         crawler = HeraldCrawler(client=mock_client)
         output = crawler.extract_all_rules(
