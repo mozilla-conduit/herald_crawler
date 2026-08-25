@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 
 from herald_scraper.client import HeraldClient
+from herald_scraper.people_client import GitHubResolution
 from herald_scraper.resolvers import StmoGroupCollector, extract_group_slugs_from_rules
 from herald_scraper.crawler import (
     HeraldCrawler,
@@ -867,16 +868,17 @@ class TestResumeFromExistingOutput:
         assert output.metadata.scrape_status is not None
         assert isinstance(output.metadata.scrape_status, ScrapeStatus)
 
-    def test_resume_preserves_original_unresolved_reasons(self) -> None:
-        """Test that original unresolved reasons are preserved on resume."""
+    @staticmethod
+    def _output_with_unresolved_author() -> HeraldRulesOutput:
+        """An existing output whose only rule author failed to resolve."""
         from datetime import datetime, timezone
 
-        existing_output = HeraldRulesOutput(
+        return HeraldRulesOutput(
             rules=[
                 Rule(
                     id="H420",
                     name="Test Rule",
-                    author="existinguser@example.com",
+                    author="alice@example.com",
                     status="active",
                     type="differential-revision",
                 )
@@ -884,11 +886,6 @@ class TestResumeFromExistingOutput:
             unresolved_users=[
                 UnresolvedUser(
                     phabricator_username="alice",
-                    reason="not_found",
-                    referenced_in=["H420"],
-                ),
-                UnresolvedUser(
-                    phabricator_username="bob",
                     reason="no_github_linked",
                     referenced_in=["H420"],
                 ),
@@ -901,11 +898,19 @@ class TestResumeFromExistingOutput:
             ),
         )
 
+    def test_resume_retries_previously_unresolved_users(self) -> None:
+        """A user who has since linked GitHub is picked up on resume."""
+        existing_output = self._output_with_unresolved_author()
+
         mock_client = Mock(spec=HeraldClient)
         mock_client.base_url = "https://phabricator.example.com"
         mock_client.fetch_listing.return_value = "<html><body></body></html>"
 
         mock_people_client = Mock()
+        mock_people_client.delay = 0
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username="alice-gh", user_id=12345, reason=None
+        )
 
         crawler = HeraldCrawler(client=mock_client)
         output = crawler.extract_all_rules(
@@ -915,12 +920,34 @@ class TestResumeFromExistingOutput:
             people_client=mock_people_client,
         )
 
-        # Original reasons should be preserved
+        mock_people_client.resolve_github.assert_called_once()
+        assert output.github_users["alice"].username == "alice-gh"
+        assert output.unresolved_users == []
+
+    def test_resume_refreshes_reason_for_still_unresolved_users(self) -> None:
+        """A retry that fails again reports the fresh reason, not the stale one."""
+        existing_output = self._output_with_unresolved_author()
+
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = "<html><body></body></html>"
+
+        mock_people_client = Mock()
+        mock_people_client.delay = 0
+        mock_people_client.resolve_github.return_value = GitHubResolution(
+            username=None, user_id=None, reason="pmo_profile_not_found"
+        )
+
+        crawler = HeraldCrawler(client=mock_client)
+        output = crawler.extract_all_rules(
+            global_only=False,
+            existing_output=existing_output,
+            extract_groups=False,
+            people_client=mock_people_client,
+        )
+
         unresolved_by_name = {u.phabricator_username: u for u in output.unresolved_users}
-        assert "alice" in unresolved_by_name
-        assert unresolved_by_name["alice"].reason == "not_found"
-        assert "bob" in unresolved_by_name
-        assert unresolved_by_name["bob"].reason == "no_github_linked"
+        assert unresolved_by_name["alice"].reason == "pmo_profile_not_found"
 
     def test_resume_prepopulates_github_cache_no_api_calls(self) -> None:
         """Test that pre-populated GitHub users don't cause API calls."""

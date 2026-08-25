@@ -3,8 +3,9 @@
 Resolve Phabricator usernames to GitHub usernames via Mozilla People Directory.
 
 This script takes a list of Phabricator usernames and resolves them to GitHub
-usernames using the two-step PMO API. Results are cached to avoid repeated
-lookups, and unresolved users are tracked separately.
+usernames using the two-step PMO API. Successful resolutions are cached to avoid
+repeated lookups; unresolved users are tracked separately and retried on every
+run, since a missing GitHub link can appear on the PMO profile later.
 
 Usage:
     export PEOPLE_MOZILLA_COOKIE="your-pmo-access-cookie-value"
@@ -106,19 +107,12 @@ class GitHubUsernameResolver:
             return github_username
         return None
 
-    def is_unresolved(self, username: str) -> bool:
-        """Check if username was previously marked as unresolved.
-
-        Args:
-            username: Phabricator username
-
-        Returns:
-            True if the username is in the unresolved list
-        """
-        return username in self._unresolved["users"]
-
     def resolve(self, username: str, force: bool = False) -> Optional[str]:
         """Resolve a single username.
+
+        Previously unresolved users are always retried: a missing GitHub link
+        is a temporary state of the person's PMO profile, so only successful
+        resolutions are treated as final and served from cache.
 
         Args:
             username: Phabricator username to resolve
@@ -132,10 +126,6 @@ class GitHubUsernameResolver:
             cached = self.get_cached(username)
             if cached:
                 return cached
-
-            # Skip previously unresolved users unless forced
-            if self.is_unresolved(username):
-                return None
 
         # Fetch from API
         try:
@@ -185,7 +175,7 @@ class GitHubUsernameResolver:
             Dict mapping Phabricator usernames to GitHub usernames (or None)
         """
         results: dict[str, Optional[str]] = {}
-        stats = {"cached": 0, "resolved": 0, "unresolved": 0, "skipped": 0, "errors": 0}
+        stats = {"cached": 0, "resolved": 0, "unresolved": 0, "errors": 0}
 
         for i, username in enumerate(usernames, 1):
             if verbose:
@@ -201,15 +191,7 @@ class GitHubUsernameResolver:
                         print(f"(cached) -> {cached}")
                     continue
 
-                if self.is_unresolved(username):
-                    results[username] = None
-                    stats["skipped"] += 1
-                    if verbose:
-                        reason = self._unresolved["users"][username].get("reason", "unknown")
-                        print(f"(skipped - {reason})")
-                    continue
-
-            # Resolve
+            # Resolve (including users that were unresolved on a previous run)
             github_username = self.resolve(username, force=force)
             results[username] = github_username
 
@@ -236,7 +218,6 @@ class GitHubUsernameResolver:
             print(f"  From cache:   {stats['cached']}")
             print(f"  Resolved:     {stats['resolved']}")
             print(f"  Unresolved:   {stats['unresolved']}")
-            print(f"  Skipped:      {stats['skipped']}")
             print(f"  Errors:       {stats['errors']}")
             print(f"\nCache saved to: {self.cache_file}")
             print(f"Unresolved saved to: {self.unresolved_file}")

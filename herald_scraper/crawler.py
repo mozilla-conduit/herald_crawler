@@ -238,8 +238,11 @@ class HeraldCrawler:
             people_client: Optional PeopleDirectoryClient for GitHub username resolution
             max_users: Optional limit on number of users to resolve (stops resolving early)
             existing_output: Optional existing output to resume from. Rules are always
-                re-fetched and updated in place; groups and GitHub resolutions that are
-                already complete are reused.
+                re-fetched and updated in place; groups and successful GitHub
+                resolutions that are already complete are reused. Users previously
+                listed as unresolved are always retried — a missing GitHub link is
+                usually a temporary state of the person's PMO profile, so the stale
+                reason is discarded rather than carried forward.
             conduit_client: Optional ConduitClient used to cross-check GitHub resolution
                 against Phabricator's Bugzilla account and real name data
             manual_github_mapping: Optional Phab -> GitHub username overrides
@@ -256,7 +259,6 @@ class HeraldCrawler:
         existing_rule_ids: Set[str] = set()
         existing_groups: Dict[str, Group] = {}
         existing_github_users: Dict[str, GitHubUser] = {}
-        existing_unresolved: Dict[str, str] = {}  # username -> reason
         existing_rules: List[Rule] = []
 
         if existing_output:
@@ -269,13 +271,11 @@ class HeraldCrawler:
                 if group.members  # non-empty members list
             }
             existing_github_users = dict(existing_output.github_users)
-            existing_unresolved = {
-                u.phabricator_username: u.reason for u in existing_output.unresolved_users
-            }
             logger.info(
                 f"Resuming from existing output: {len(existing_rule_ids)} rules, "
                 f"{len(existing_groups)} groups (with members), "
-                f"{len(existing_github_users)} GitHub users"
+                f"{len(existing_github_users)} GitHub users; retrying "
+                f"{len(existing_output.unresolved_users)} unresolved users"
             )
 
         # Get all rule IDs
@@ -336,11 +336,11 @@ class HeraldCrawler:
                 manual_mapping=manual_github_mapping,
             )
 
-            # Pre-populate cache with existing data
+            # Pre-populate the cache with successful resolutions only. Previously
+            # unresolved users are deliberately left out so they get another
+            # lookup: their PMO profile may have gained a GitHub link since.
             for username, gh_user in existing_github_users.items():
                 username_resolver._cache[username] = gh_user
-            for username, reason in existing_unresolved.items():
-                username_resolver._unresolved[username] = reason
 
             new_users, new_unresolved, hit_max_users = username_resolver.resolve_all(
                 rules,
