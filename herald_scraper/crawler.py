@@ -346,7 +346,6 @@ class HeraldCrawler:
                 rules,
                 groups,
                 max_users=max_users,
-                delay=people_client.delay if people_client else 0,
             )
 
             github_users.update(new_users)

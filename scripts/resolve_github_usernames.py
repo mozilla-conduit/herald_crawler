@@ -36,7 +36,12 @@ from typing import Optional
 # Add the project root to path so we can import herald_scraper
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from herald_scraper.people_client import PeopleDirectoryClient
+from herald_scraper.exceptions import RateLimitError
+from herald_scraper.people_client import (
+    MAX_RATE_LIMIT_RETRIES,
+    PeopleDirectoryClient,
+    rate_limit_backoff_seconds,
+)
 
 
 class GitHubUsernameResolver:
@@ -47,7 +52,6 @@ class GitHubUsernameResolver:
         client: PeopleDirectoryClient,
         cache_file: Path,
         unresolved_file: Path,
-        delay: float = 0.5,
     ) -> None:
         """Initialize the resolver.
 
@@ -55,12 +59,10 @@ class GitHubUsernameResolver:
             client: PeopleDirectoryClient for API calls
             cache_file: Path to cache file for resolved usernames
             unresolved_file: Path to file for tracking unresolved users
-            delay: Delay between API requests in seconds
         """
         self.client = client
         self.cache_file = cache_file
         self.unresolved_file = unresolved_file
-        self.delay = delay
         self._cache = self._load_cache()
         self._unresolved = self._load_unresolved()
 
@@ -107,12 +109,22 @@ class GitHubUsernameResolver:
             return github_username
         return None
 
+    def _mark_unresolved(self, username: str, reason: str) -> None:
+        """Record why a username could not be resolved on this run."""
+        self._unresolved["users"][username] = {
+            "reason": reason,
+            "checked_at": datetime.now().isoformat(),
+        }
+
     def resolve(self, username: str, force: bool = False) -> Optional[str]:
         """Resolve a single username.
 
         Previously unresolved users are always retried: a missing GitHub link
         is a temporary state of the person's PMO profile, so only successful
         resolutions are treated as final and served from cache.
+
+        Requests are not paced. A rate-limited response is waited out for as
+        long as it asks and retried, rather than being recorded as a failure.
 
         Args:
             username: Phabricator username to resolve
@@ -128,9 +140,20 @@ class GitHubUsernameResolver:
                 return cached
 
         # Fetch from API
-        try:
-            github_username = self.client.resolve_github_username(username)
-            time.sleep(self.delay)
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                github_username = self.client.resolve_github_username(username)
+            except RateLimitError as e:
+                if attempt >= MAX_RATE_LIMIT_RETRIES:
+                    self._mark_unresolved(username, "rate_limited")
+                    return None
+                wait = rate_limit_backoff_seconds(e, attempt)
+                print(f"(rate limited, waiting {wait:.0f}s)", end=" ", flush=True)
+                time.sleep(wait)
+                continue
+            except Exception as e:
+                self._mark_unresolved(username, f"error: {str(e)}")
+                return None
 
             if github_username:
                 # Cache the result
@@ -142,21 +165,11 @@ class GitHubUsernameResolver:
                 if username in self._unresolved["users"]:
                     del self._unresolved["users"][username]
                 return github_username
-            else:
-                # Track as unresolved
-                self._unresolved["users"][username] = {
-                    "reason": "no_github_linked_or_not_found",
-                    "checked_at": datetime.now().isoformat(),
-                }
-                return None
 
-        except Exception as e:
-            # Track as unresolved with error
-            self._unresolved["users"][username] = {
-                "reason": f"error: {str(e)}",
-                "checked_at": datetime.now().isoformat(),
-            }
+            self._mark_unresolved(username, "no_github_linked_or_not_found")
             return None
+
+        return None
 
     def resolve_batch(
         self,
@@ -251,12 +264,6 @@ def main():
         help="Unresolved users file path (default: unresolved_github_users.json)",
     )
     parser.add_argument(
-        "--delay",
-        type=float,
-        default=0.5,
-        help="Delay between API requests in seconds (default: 0.5)",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
         help="Force re-fetch even if cached",
@@ -303,12 +310,11 @@ def main():
         sys.exit(1)
 
     # Initialize client and resolver
-    client = PeopleDirectoryClient(cookie=cookie, delay=args.delay)
+    client = PeopleDirectoryClient(cookie=cookie)
     resolver = GitHubUsernameResolver(
         client=client,
         cache_file=Path(args.cache),
         unresolved_file=Path(args.unresolved),
-        delay=args.delay,
     )
 
     print(f"Resolving {len(usernames)} usernames")

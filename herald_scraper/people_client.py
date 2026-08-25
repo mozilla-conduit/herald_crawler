@@ -7,6 +7,8 @@ from typing import NamedTuple, Optional
 
 import requests
 
+from herald_scraper.exceptions import RateLimitError
+
 
 class GitHubResolution(NamedTuple):
     """Result of resolving a Phabricator username to GitHub.
@@ -40,6 +42,20 @@ PMO_GRAPHQL_URL = "https://people.mozilla.org/api/v4/graphql"
 PMO_GITHUB_USERNAME_URL = "https://people.mozilla.org/whoami/github/username/{github_id}"
 PMO_SEARCH_SIMPLE_URL = "https://people.mozilla.org/api/v4/search/simple/"
 
+# PMO's /whoami/github/ endpoint proxies GitHub, so GitHub's rate limits can
+# surface here. GitHub signals both its primary and secondary rate limits with
+# either status code:
+# https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
+RATE_LIMIT_STATUS_CODES = (403, 429)
+
+# GitHub's documented floor for a secondary rate limit that carries no explicit
+# retry hint: "Otherwise, wait for at least one minute before retrying."
+DEFAULT_RATE_LIMIT_WAIT = 60.0
+
+# "throw an error after a specific number of retries" — with the exponential
+# growth below this bounds a single lookup at 60+120+240+480s of waiting.
+MAX_RATE_LIMIT_RETRIES = 4
+
 GITHUB_ID_QUERY = """
 query GetGitHubId($username: String) {
   profile(username: $username) {
@@ -71,17 +87,34 @@ class PeopleDirectoryClient:
     2. REST API to get GitHub username from GitHub ID
     """
 
-    def __init__(self, cookie: str, delay: float = 0.5) -> None:
+    def __init__(self, cookie: str) -> None:
         """Initialize the People Directory client.
+
+        Requests are not paced: the client runs at full speed and only backs
+        off when a response reports a rate limit (see
+        ``rate_limit_wait_seconds``).
 
         Args:
             cookie: pmo-access cookie value for authentication
-            delay: Delay between requests in seconds (rate limiting)
         """
-        self.delay = delay
         self._session = requests.Session()
         self._session.cookies.set("pmo-access", cookie, domain=".mozilla.org")
         self._session.headers["User-Agent"] = "HeraldScraper/0.1"
+
+    @staticmethod
+    def _check_response(response: requests.Response, what: str) -> None:
+        """Raise on an error response, telling rate limits apart from failures.
+
+        Rate limits become ``RateLimitError`` so the caller can wait and retry
+        instead of recording the user as permanently unresolved.
+        """
+        wait = rate_limit_wait_seconds(response)
+        if wait is not None:
+            raise RateLimitError(
+                f"Rate limited (HTTP {response.status_code}) while {what}",
+                retry_after=wait,
+            )
+        response.raise_for_status()
 
     def get_github_id(self, username: str) -> dict:
         """Get GitHub ID from Phabricator username via GraphQL.
@@ -101,7 +134,7 @@ class PeopleDirectoryClient:
 
         logger.debug(f"Querying GitHub ID for: {username}")
         response = self._session.post(PMO_GRAPHQL_URL, headers=headers, json=payload)
-        response.raise_for_status()
+        self._check_response(response, f"querying GitHub ID for {username}")
         result: dict = response.json()
         return result
 
@@ -123,7 +156,7 @@ class PeopleDirectoryClient:
 
         logger.debug(f"Querying Bugzilla ID for: {username}")
         response = self._session.post(PMO_GRAPHQL_URL, headers=headers, json=payload)
-        response.raise_for_status()
+        self._check_response(response, f"querying Bugzilla ID for {username}")
         result: dict = response.json()
         return result
 
@@ -140,7 +173,7 @@ class PeopleDirectoryClient:
 
         logger.debug(f"Querying GitHub username for ID: {github_id}")
         response = self._session.get(url)
-        response.raise_for_status()
+        self._check_response(response, f"querying GitHub username for ID {github_id}")
         result: dict = response.json()
         return result
 
@@ -162,7 +195,7 @@ class PeopleDirectoryClient:
         response = self._session.get(
             PMO_SEARCH_SIMPLE_URL, params={"q": query, "w": "all"}
         )
-        response.raise_for_status()
+        self._check_response(response, f"searching profiles for {query}")
         result: dict = response.json()
         return result
 
@@ -216,20 +249,17 @@ class PeopleDirectoryClient:
         # the Phab realName so the same fallbacks can match against a more
         # relevant result set.
         if not github_id and not profile_found:
-            time.sleep(self.delay)
             search_response = self.search_simple(username)
             resolved = self._match_search_fallbacks(
                 search_response, username, expected_bmo_id, expected_real_name
             )
             if not resolved and expected_real_name:
-                time.sleep(self.delay)
                 search_response = self.search_simple(expected_real_name)
                 resolved = self._match_search_fallbacks(
                     search_response, username, expected_bmo_id, expected_real_name
                 )
             if resolved and resolved != username:
                 logger.info(f"PMO username fallback: {username} -> {resolved}")
-                time.sleep(self.delay)
                 graphql_response = self.get_github_id(resolved)
                 github_id = extract_github_id(graphql_response)
                 if not _profile_not_found(graphql_response):
@@ -267,7 +297,6 @@ class PeopleDirectoryClient:
         # unlinked, etc.), there's nothing to contradict, so we keep the
         # resolution.
         if expected_bmo_id is not None:
-            time.sleep(self.delay)
             bmo_response = self.get_bugzilla_id(canonical_name)
             actual_bmo_id = extract_bugzilla_id(bmo_response)
             if actual_bmo_id is None:
@@ -283,9 +312,6 @@ class PeopleDirectoryClient:
                 return GitHubResolution(
                     username=None, user_id=None, reason="bmo_id_mismatch"
                 )
-
-        # Rate limit between API calls
-        time.sleep(self.delay)
 
         # Step 2: Get GitHub username from ID
         rest_response = self.get_github_username_by_id(github_id)
@@ -338,7 +364,6 @@ class PeopleDirectoryClient:
             candidate = dino.get("username")
             if not candidate:
                 continue
-            time.sleep(self.delay)
             bmo_response = self.get_bugzilla_id(candidate)
             candidate_bmo_id = extract_bugzilla_id(bmo_response)
             if candidate_bmo_id and candidate_bmo_id == expected_bmo_id:
@@ -360,6 +385,84 @@ class PeopleDirectoryClient:
             GitHub username if found, None otherwise
         """
         return self.resolve_github(username).username
+
+
+def rate_limit_wait_seconds(response: requests.Response) -> Optional[float]:
+    """How long to wait before retrying a rate-limited response.
+
+    Implements GitHub's documented order of precedence for both the primary
+    and the secondary rate limit:
+
+    1. ``retry-after`` present -> wait that many seconds.
+    2. ``x-ratelimit-remaining`` is ``0`` -> wait until ``x-ratelimit-reset``
+       (UTC epoch seconds).
+    3. Otherwise -> wait at least one minute.
+
+    Returns None when the response is not a rate limit, so the caller can
+    fail fast. A bare 403 with none of the signals above is far more likely
+    an expired ``pmo-access`` cookie than a rate limit, and retrying that
+    would just spin; 429 always means rate limited.
+    """
+    if response.status_code not in RATE_LIMIT_STATUS_CODES:
+        return None
+
+    retry_after = _parse_seconds(response.headers.get("retry-after"))
+    if retry_after is not None:
+        return max(0.0, retry_after)
+
+    if (response.headers.get("x-ratelimit-remaining") or "").strip() == "0":
+        reset = _parse_seconds(response.headers.get("x-ratelimit-reset"))
+        if reset is None:
+            return DEFAULT_RATE_LIMIT_WAIT
+        return max(0.0, reset - time.time())
+
+    if response.status_code == 429 or _mentions_rate_limit(response):
+        return DEFAULT_RATE_LIMIT_WAIT
+
+    return None
+
+
+def rate_limit_backoff_seconds(error: RateLimitError, attempt: int) -> float:
+    """How long to wait before retry ``attempt`` (0-based) of a rate-limited call.
+
+    An explicit hint from the response is authoritative — GitHub tells us not
+    to retry before it elapses, and inflating it would only idle longer than
+    needed. The "wait at least a minute" fallback is the one that grows
+    exponentially, per "if your request continues to fail due to a secondary
+    rate limit, wait for an exponentially increasing amount of time between
+    retries".
+    """
+    if error.retry_after is not None:
+        return error.retry_after
+    return DEFAULT_RATE_LIMIT_WAIT * (2**attempt)
+
+
+def _parse_seconds(value: Optional[str]) -> Optional[float]:
+    """Parse a numeric header value, or None if absent/not a number.
+
+    GitHub sends ``retry-after`` as an integer number of seconds rather than
+    the HTTP-date the RFC also allows, so anything non-numeric is treated as
+    "no hint" and falls through to the next signal.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value.strip())
+    except (AttributeError, ValueError):
+        return None
+
+
+def _mentions_rate_limit(response: requests.Response) -> bool:
+    """Whether the response body names a rate limit.
+
+    Secondary rate limits are only distinguishable from an ordinary 403 by
+    "an error message that indicates that you exceeded a secondary rate
+    limit", so fall back to sniffing the body.
+    """
+    try:
+        return "rate limit" in response.text.lower()
+    except Exception:  # pragma: no cover - defensive, decoding a body
+        return False
 
 
 def extract_github_id(response: dict) -> Optional[str]:

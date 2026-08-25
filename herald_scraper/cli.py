@@ -99,7 +99,9 @@ def main() -> int:
         "--delay",
         type=float,
         default=1.0,
-        help="Delay between requests in seconds (default: 1.0)",
+        help="Delay between Phabricator requests in seconds (default: 1.0). "
+        "People Directory lookups are not paced; they back off only when a "
+        "response reports a rate limit.",
     )
     parser.add_argument(
         "--timeout",
@@ -270,7 +272,7 @@ def main() -> int:
         if not args.no_resolve_github:
             pmo_cookie = args.pmo_cookie or os.environ.get("PEOPLE_MOZILLA_COOKIE")
             if pmo_cookie:
-                people_client = PeopleDirectoryClient(cookie=pmo_cookie, delay=args.delay)
+                people_client = PeopleDirectoryClient(cookie=pmo_cookie)
                 logger.info("GitHub username resolution enabled")
             else:
                 logger.warning(
