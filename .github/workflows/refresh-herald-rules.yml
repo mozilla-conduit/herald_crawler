@@ -9,8 +9,9 @@ permissions:
   contents: read
 
 env:
-  TARGET_REPO: mozilla-conduit/reviewer-selector
-  FORK_REPO: shtrom/reviewer-selector
+  RS_REPO: reviewer-selector
+  TARGET_OWNER: mozilla-conduit
+  FORK_OWNER: shtrom
   REFRESH_BRANCH: herald-rules-refresh
 
 jobs:
@@ -65,7 +66,7 @@ jobs:
       - name: Check out reviewer-selector
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ env.TARGET_REPO }}
+          repository: ${{ env.TARGET_OWNER }}/${{ env.RS_REPO}}
           # Use the fork's token so auth is set-up to push to it.
           token: ${{ secrets.FORK_GH_TOKEN }}
           path: reviewer-selector
@@ -88,11 +89,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_SELECTOR_GH_TOKEN }}
         run: |
-          if [ -z "$(gh pr list --repo "${TARGET_REPO}" \
-                       --head "${REFRESH_BRANCH}" --state open --json number --jq '.[].number')" ]; then
+          if [ -z "$(gh pr list --repo "${TARGET_OWNER}/${RS_REPO}" \
+                      --head "${FORK_OWNER}:${REFRESH_BRANCH}" \
+                      --state open --json number --jq '.[].number')" ]; then
             gh pr create \
-              --repo "${TARGET_REPO}" \
-              --head "${REFRESH_BRANCH}" \
+              --repo "${TARGET_OWNER}/${RS_REPO}" \
+              --head "${FORK_OWNER}:${REFRESH_BRANCH}" \
               --title "herald_rules: update $(date +%Y-%m-%d) (bug 2048101)" \
               --body "Automated refresh of herald_rules.json by herald_crawler's scheduled workflow."
           fi
