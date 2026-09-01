@@ -84,18 +84,20 @@ jobs:
           git remote add work "https://github.com/${FORK_OWNER}/${RS_REPO}"
           git push --force work "${REFRESH_BRANCH}"
 
-      - name: Open or update pull request
+      - name: Open new pull request
         working-directory: reviewer-selector
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_SELECTOR_GH_TOKEN }}
         run: |
-          if [ -z "$(gh pr list --repo "${TARGET_OWNER}/${RS_REPO}" \
+          if [ -n "$(gh pr list --repo "${TARGET_OWNER}/${RS_REPO}" \
                       --head "${REFRESH_BRANCH}" --state open \
                       --json number --jq '.[].number')" ]; then
-            gh pr create \
-              --repo "${TARGET_OWNER}/${RS_REPO}" \
-              --head "${FORK_OWNER}:${REFRESH_BRANCH}" \
-              --title "herald_rules: update $(date +%Y-%m-%d) (bug 2048101)" \
-              --body "Automated refresh of herald_rules.json by herald_crawler's scheduled workflow."
+            gh pr close "${PR_NUMBER}" \
+              --repo "${TARGET_OWNER}/${RS_REPO}"
           fi
+          gh pr create \
+            --repo "${TARGET_OWNER}/${RS_REPO}" \
+            --head "${FORK_OWNER}:${REFRESH_BRANCH}" \
+            --title "herald_rules: update $(date +%Y-%m-%d) (bug 2048101)" \
+            --body "Automated refresh of herald_rules.json by herald_crawler's scheduled workflow."
 
