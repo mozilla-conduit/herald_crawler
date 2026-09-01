@@ -89,9 +89,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.REVIEWER_SELECTOR_GH_TOKEN }}
         run: |
-          if [ -n "$(gh pr list --repo "${TARGET_OWNER}/${RS_REPO}" \
+          PR_NUMBER="$(gh pr list --repo "${TARGET_OWNER}/${RS_REPO}" \
                       --head "${REFRESH_BRANCH}" --state open \
-                      --json number --jq '.[].number')" ]; then
+                      --json number --jq '.[].number')"
+          if [ -n "${PR_NUMBER}" ]; then
             gh pr close "${PR_NUMBER}" \
               --repo "${TARGET_OWNER}/${RS_REPO}"
           fi
