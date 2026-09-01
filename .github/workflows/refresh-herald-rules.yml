@@ -90,8 +90,8 @@ jobs:
           GH_TOKEN: ${{ secrets.REVIEWER_SELECTOR_GH_TOKEN }}
         run: |
           if [ -z "$(gh pr list --repo "${TARGET_OWNER}/${RS_REPO}" \
-                      --head "${FORK_OWNER}:${REFRESH_BRANCH}" \
-                      --state open --json number --jq '.[].number')" ]; then
+                      --head "${REFRESH_BRANCH}" --state open \
+                      --json number --jq '.[].number')" ]; then
             gh pr create \
               --repo "${TARGET_OWNER}/${RS_REPO}" \
               --head "${FORK_OWNER}:${REFRESH_BRANCH}" \
