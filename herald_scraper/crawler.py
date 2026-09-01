@@ -357,7 +357,8 @@ class HeraldCrawler:
             # without a PMO cookie most users stay unresolved.
             github_complete = not hit_max_users and people_client is not None
 
-        # Emit users in a stable, lexicographic order regardless of discovery order
+        # Emit groups and users in a stable, lexicographic order regardless of discovery order
+        groups = dict(sorted(groups.items()))
         for group in groups.values():
             group.members.sort()
         github_users = dict(sorted(github_users.items()))
