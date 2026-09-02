@@ -17,7 +17,12 @@ from herald_scraper.crawler import (
 )
 from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.people_client import PeopleDirectoryClient
-from herald_scraper.resolvers import REVIEW_GROUPS_TABLE, StmoGroupCollector
+from herald_scraper.resolvers import (
+    GITHUB_LOGINS_TABLE,
+    REVIEW_GROUPS_TABLE,
+    StmoGitHubMapper,
+    StmoGroupCollector,
+)
 from herald_scraper.stmo_client import (
     DEFAULT_DATA_SOURCE,
     DEFAULT_STMO_URL,
@@ -158,6 +163,12 @@ def main() -> int:
         help=f"Review groups table to query (default: {REVIEW_GROUPS_TABLE})",
     )
     parser.add_argument(
+        "--stmo-github-table",
+        default=GITHUB_LOGINS_TABLE,
+        help="Workgroup membership table holding the email -> GitHub login "
+        f"mapping (default: {GITHUB_LOGINS_TABLE})",
+    )
+    parser.add_argument(
         "--stmo-query-timeout",
         type=float,
         default=300.0,
@@ -244,8 +255,9 @@ def main() -> int:
                     "GitHub resolution will not be cross-checked against Phabricator."
                 )
 
-        # Set up STMO client for reviewer group membership
+        # Set up STMO client for reviewer group membership and GitHub logins
         stmo_collector = None
+        stmo_github_mapper = None
         if args.stmo_api_key or os.environ.get("REDASH_API_KEY"):
             stmo_client = StmoClient.from_environment(
                 api_key=args.stmo_api_key,
@@ -256,6 +268,8 @@ def main() -> int:
             )
             stmo_collector = StmoGroupCollector(stmo_client, table=args.stmo_table)
             logger.info(f"Collecting reviewer groups from {args.stmo_table} on STMO")
+            stmo_github_mapper = StmoGitHubMapper(stmo_client, table=args.stmo_github_table)
+            logger.info(f"Mapping GitHub logins from {args.stmo_github_table} on STMO")
 
         # Set up People Directory client for GitHub resolution (enabled by default)
         people_client = None
@@ -266,10 +280,10 @@ def main() -> int:
                 logger.info("GitHub username resolution enabled")
             else:
                 logger.warning(
-                    "No PMO cookie: GitHub usernames will only come from "
-                    "--github-user-mapping, and every other user will be reported as "
-                    "unresolved. Set PEOPLE_MOZILLA_COOKIE or use --pmo-cookie to "
-                    "resolve them."
+                    "No PMO cookie: GitHub usernames will only come from the STMO "
+                    "map and --github-user-mapping, and every other user will be "
+                    "reported as unresolved. Set PEOPLE_MOZILLA_COOKIE or use "
+                    "--pmo-cookie to resolve them."
                 )
 
         manual_github_mapping = None
@@ -292,6 +306,7 @@ def main() -> int:
             conduit_client=conduit_client,
             manual_github_mapping=manual_github_mapping,
             stmo_collector=stmo_collector,
+            stmo_github_mapper=stmo_github_mapper,
             resolve_github=not args.no_resolve_github,
         )
 

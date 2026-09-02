@@ -52,6 +52,7 @@ def extract_group_slugs_from_rules(rules: List[Rule]) -> Set[str]:
 
 
 REVIEW_GROUPS_TABLE = "phabricator_metrics.review_groups"
+GITHUB_LOGINS_TABLE = "mozcloud.workgroup_subgroup_members"
 
 # Table and column names are interpolated into SQL, so restrict them to
 # dotted identifiers (BigQuery project IDs may contain hyphens).
@@ -59,6 +60,7 @@ _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$")
 
 _MEMBER_SEPARATOR_RE = re.compile(r"[,;\s]+")
 _NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class StmoGroupCollector:
@@ -98,6 +100,7 @@ class StmoGroupCollector:
         self.table = table
         self._groups_by_name: Optional[Dict[str, Group]] = None
         self._groups_by_slug: Dict[str, Group] = {}
+        self._emails_by_username: Dict[str, str] = {}
 
     def extract_group_slugs_from_rules(self, rules: List[Rule]) -> Set[str]:
         """
@@ -167,7 +170,22 @@ class StmoGroupCollector:
             rows = self.client.run_query(self.build_query())
             self._groups_by_name = self._groups_from_rows(rows)
             self._groups_by_slug = self._index_by_slug(self._groups_by_name)
+            self._emails_by_username = self._emails_from_rows(rows)
         return self._groups_by_name
+
+    def fetch_user_emails(self) -> Dict[str, str]:
+        """
+        Return ``phab_username -> email`` for every member of every group.
+
+        The addresses come from the same query as the groups themselves, so
+        this costs nothing beyond ``fetch_all_groups``. They are the join key
+        into STMO's email-keyed GitHub login map (see StmoGitHubMapper).
+
+        Raises:
+            StmoError: If the query fails
+        """
+        self.fetch_all_groups()
+        return self._emails_by_username
 
     def build_query(self) -> str:
         """Build the SQL selecting one row per group.
@@ -193,6 +211,7 @@ class StmoGroupCollector:
         """Clear the cached query result."""
         self._groups_by_name = None
         self._groups_by_slug = {}
+        self._emails_by_username = {}
         logger.debug("STMO group collector cache cleared")
 
     def _lookup_group(self, slug: str) -> Optional[Group]:
@@ -208,11 +227,7 @@ class StmoGroupCollector:
         return self._groups_by_slug.get(_slugify(slug))
 
     def _groups_from_rows(self, rows: List[Dict[str, object]]) -> Dict[str, Group]:
-        """Turn query rows into Groups keyed by their STMO ``group_name``.
-
-        Also accumulates the ``username -> email`` mapping, which the table
-        carries as two parallel arrays per group.
-        """
+        """Turn query rows into Groups keyed by their STMO ``group_name``."""
         groups: Dict[str, Group] = {}
 
         for row in rows:
@@ -229,6 +244,40 @@ class StmoGroupCollector:
             groups[name] = Group(id=name, display_name=name, members=members)
 
         return groups
+
+    def _emails_from_rows(self, rows: List[Dict[str, object]]) -> Dict[str, str]:
+        """Pair up each group's usernames with its emails.
+
+        The table carries the two as parallel arrays, so they only line up
+        positionally; a row where they disagree in length carries no usable
+        pairing and is dropped whole rather than mis-attributed.
+        """
+        emails: Dict[str, str] = {}
+
+        for row in rows:
+            usernames = _coerce_string_list(row.get("group_usernames"))
+            addresses = _coerce_string_list(row.get("group_emails"))
+            if len(usernames) != len(addresses):
+                logger.warning(
+                    f"Group {row.get('group_name')} in {self.table} lists "
+                    f"{len(usernames)} usernames but {len(addresses)} emails; "
+                    f"ignoring its email mapping"
+                )
+                continue
+
+            for username, address in zip(usernames, addresses):
+                if not _looks_like_email(address):
+                    continue
+                email = address.strip().lower()
+                known = emails.setdefault(username, email)
+                if known != email:
+                    logger.warning(
+                        f"Conflicting emails for {username} in {self.table}: "
+                        f"keeping {known}, ignoring {email}"
+                    )
+
+        logger.debug(f"Collected emails for {len(emails)} users from {self.table}")
+        return emails
 
     def _index_by_slug(self, groups: Dict[str, Group]) -> Dict[str, Group]:
         """Index groups by slugified name, dropping ambiguous collisions."""
@@ -251,9 +300,180 @@ class StmoGroupCollector:
         return index
 
 
+class StmoGitHubMapper:
+    """Maps Mozilla email addresses to GitHub logins from an STMO table.
+
+    ``mozcloud.workgroup_subgroup_members`` has one row per workgroup
+    membership, where ``value`` is either a member's email address or a
+    nested group's name, and ``github_login`` is that member's GitHub
+    account. One query pulls the whole directory, so it covers most people
+    without the per-user People Directory lookups it fronts.
+
+    The table carries no numeric GitHub user ID, so callers only get a login.
+
+    Example:
+        mapper = StmoGitHubMapper(StmoClient(api_key="..."))
+        login = mapper.login_for_email("someone@example.com")
+    """
+
+    def __init__(
+        self,
+        client: StmoClient,
+        table: str = GITHUB_LOGINS_TABLE,
+    ) -> None:
+        """
+        Initialize the STMO GitHub mapper.
+
+        Args:
+            client: StmoClient used to run the query
+            table: Fully-qualified workgroup membership table
+
+        Raises:
+            ValueError: If table is not a plain SQL identifier
+        """
+        if not _SQL_IDENTIFIER_RE.match(table):
+            raise ValueError(f"Invalid STMO table name: {table!r}")
+
+        self.client = client
+        self.table = table
+        self._logins_by_email: Optional[Dict[str, str]] = None
+        self._logins_by_local_part: Dict[str, str] = {}
+
+    def login_for_email(self, email: str) -> Optional[str]:
+        """
+        Look up a GitHub login by exact email address (case-insensitive).
+
+        Args:
+            email: Email address to look up
+
+        Returns:
+            GitHub login, or None if the address isn't in the table
+
+        Raises:
+            StmoError: If the query fails
+        """
+        if not email:
+            return None
+        return self.fetch_all_logins().get(email.strip().lower())
+
+    def login_for_local_part(self, local_part: str) -> Optional[str]:
+        """
+        Look up a GitHub login by the local part of its email address.
+
+        For most people the Phabricator username *is* the local part of their
+        Mozilla address, so this catches users we have no recorded email for.
+        Local parts shared by several addresses with different logins are
+        ambiguous and never match.
+
+        Args:
+            local_part: Email local part, e.g. a Phabricator username
+
+        Returns:
+            GitHub login, or None if nothing matched unambiguously
+
+        Raises:
+            StmoError: If the query fails
+        """
+        if not local_part:
+            return None
+        self.fetch_all_logins()
+        return self._logins_by_local_part.get(local_part.strip().lower())
+
+    def fetch_all_logins(self) -> Dict[str, str]:
+        """
+        Fetch the whole ``email -> GitHub login`` map, keyed by lowercase email.
+
+        The result is cached, so repeated calls run a single query.
+
+        Raises:
+            StmoError: If the query fails
+        """
+        if self._logins_by_email is None:
+            rows = self.client.run_query(self.build_query())
+            self._logins_by_email = self._logins_from_rows(rows)
+            self._logins_by_local_part = self._index_by_local_part(self._logins_by_email)
+        return self._logins_by_email
+
+    def build_query(self) -> str:
+        """Build the SQL selecting every known member-to-GitHub pairing."""
+        return (
+            "SELECT DISTINCT value, github_login\n"
+            f"FROM {self.table}\n"
+            "WHERE github_login IS NOT NULL"
+        )
+
+    def clear_cache(self) -> None:
+        """Clear the cached query result."""
+        self._logins_by_email = None
+        self._logins_by_local_part = {}
+        logger.debug("STMO GitHub mapper cache cleared")
+
+    def _logins_from_rows(self, rows: List[Dict[str, object]]) -> Dict[str, str]:
+        """Turn query rows into an ``email -> login`` map.
+
+        ``value`` names a nested group as often as it holds a member's email;
+        only the addresses identify a person, so everything else is dropped.
+        """
+        logins: Dict[str, str] = {}
+        skipped = 0
+
+        for row in rows:
+            value = row.get("value")
+            raw_login = row.get("github_login")
+            if not value or not raw_login:
+                continue
+
+            if not _looks_like_email(str(value)):
+                skipped += 1
+                continue
+
+            email = str(value).strip().lower()
+            login = str(raw_login).strip()
+            if not login:
+                continue
+
+            known = logins.setdefault(email, login)
+            if known != login:
+                logger.warning(
+                    f"Conflicting GitHub logins for {email} in {self.table}: "
+                    f"keeping {known}, ignoring {login}"
+                )
+
+        logger.info(
+            f"Loaded {len(logins)} email -> GitHub login pairs from {self.table} "
+            f"({skipped} non-email values skipped)"
+        )
+        return logins
+
+    def _index_by_local_part(self, logins: Dict[str, str]) -> Dict[str, str]:
+        """Index logins by email local part, dropping ambiguous collisions."""
+        index: Dict[str, str] = {}
+        collisions: Set[str] = set()
+
+        for email, login in logins.items():
+            key = email.split("@", 1)[0]
+            if not key:
+                continue
+            if index.get(key, login) != login:
+                collisions.add(key)
+                continue
+            index[key] = login
+
+        for key in collisions:
+            logger.warning(f"Ambiguous email local part in {self.table}: {key}")
+            del index[key]
+
+        return index
+
+
 def _slugify(name: str) -> str:
     """Normalize a group name for slug comparison ('OMC Reviewers' -> 'omc-reviewers')."""
     return _NON_SLUG_RE.sub("-", name.lower()).strip("-")
+
+
+def _looks_like_email(value: str) -> bool:
+    """Tell a member's email address from a nested group's name."""
+    return bool(_EMAIL_RE.match(value.strip()))
 
 
 def _coerce_string_list(value: object) -> List[str]:
@@ -310,15 +530,17 @@ class UsernameResolver:
         client: Optional[PeopleDirectoryClient] = None,
         conduit_client: Optional[ConduitClient] = None,
         manual_mapping: Optional[Dict[str, GitHubUser]] = None,
+        github_mapper: Optional[StmoGitHubMapper] = None,
+        user_emails: Optional[Dict[str, str]] = None,
     ) -> None:
         """
         Initialize the UsernameResolver.
 
         Args:
             client: Optional PeopleDirectoryClient for resolving usernames.
-                Without one (no PMO cookie), only ``manual_mapping`` can
-                resolve a user; everyone else is reported as unresolved
-                rather than silently omitted.
+                Without one (no PMO cookie), only ``manual_mapping`` and
+                ``github_mapper`` can resolve a user; everyone else is
+                reported as unresolved rather than silently omitted.
             conduit_client: Optional ConduitClient. When provided, each
                 resolution cross-checks the PMO profile's
                 ``bugzillaMozillaOrgId`` against Phabricator's
@@ -328,10 +550,20 @@ class UsernameResolver:
                 over automatic resolution. Keys are matched case-sensitively
                 against the Phab username (after stripping ``@domain`` like
                 other paths).
+            github_mapper: Optional StmoGitHubMapper. Its bulk email ->
+                GitHub login map is consulted before the People Directory,
+                since it answers for most users off a single query. It
+                carries no numeric GitHub ID, so users it resolves get a
+                ``username`` and no ``user_id``.
+            user_emails: Optional ``phab_username -> email`` map used as the
+                join key into ``github_mapper``, typically
+                ``StmoGroupCollector.fetch_user_emails()``.
         """
         self.client = client
         self.conduit_client = conduit_client
         self.manual_mapping = manual_mapping or {}
+        self.github_mapper = github_mapper
+        self.user_emails = user_emails or {}
         self._cache: Dict[str, GitHubUser] = {}
         self._unresolved: Dict[str, str] = {}  # username -> reason
         # username -> (bmo_id, real_name); either value may be None
@@ -486,6 +718,16 @@ class UsernameResolver:
             logger.debug(f"Already unresolved: {lookup_name}")
             return None
 
+        # STMO's directory answers for most people off a single query, so it
+        # runs ahead of the per-user PMO lookups. It knows no numeric GitHub
+        # ID, hence user_id stays None for whoever it resolves.
+        login = self._github_login_from_stmo(username, lookup_name)
+        if login:
+            github_user = GitHubUser(username=login)
+            self._cache[lookup_name] = github_user
+            logger.debug(f"STMO GitHub map: {lookup_name} -> {login}")
+            return github_user
+
         # No People Directory access: record the user as unresolved instead of
         # dropping them, so the output still lists who needs a manual mapping.
         if self.client is None:
@@ -538,6 +780,36 @@ class UsernameResolver:
             return None
 
         return None  # pragma: no cover - loop always returns or continues
+
+    def _github_login_from_stmo(self, username: str, lookup_name: str) -> Optional[str]:
+        """Look a user up in STMO's email-keyed GitHub login map.
+
+        The map knows people by email, so the Phab username is translated
+        first: via the group membership emails, or via the reviewer target
+        itself when a rule already names an address. Users neither source
+        covers fall back to matching the email local part, which is the Phab
+        username for most people.
+
+        A failed query disables the mapper rather than being retried for
+        every remaining user; resolution carries on through PMO.
+        """
+        if self.github_mapper is None:
+            return None
+
+        email = self.user_emails.get(lookup_name)
+        if not email and _looks_like_email(username):
+            email = username
+
+        try:
+            if email:
+                login = self.github_mapper.login_for_email(email)
+                if login:
+                    return login
+            return self.github_mapper.login_for_local_part(lookup_name)
+        except Exception as e:
+            logger.warning(f"STMO GitHub map unavailable, falling back to PMO: {e}")
+            self.github_mapper = None
+            return None
 
     def resolve_all(
         self,
