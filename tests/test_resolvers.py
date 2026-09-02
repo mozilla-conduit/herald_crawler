@@ -8,7 +8,12 @@ from herald_scraper.exceptions import RateLimitError
 from herald_scraper.models import Action, GitHubUser, Group, Reviewer, Rule
 from herald_scraper.people_client import GitHubResolution
 from herald_scraper.rate_limit import MAX_RATE_LIMIT_RETRIES
-from herald_scraper.resolvers import UsernameResolver, _clean_phab_real_name
+from herald_scraper.resolvers import (
+    StmoGitHubMapper,
+    UsernameResolver,
+    _clean_phab_real_name,
+)
+from herald_scraper.stmo_client import StmoError
 
 
 class TestCleanPhabRealName:
@@ -715,3 +720,118 @@ class TestUsernameResolverRateLimit:
 
         conduit.user_search.assert_called_once()
         assert client.resolve_github.call_count == 2
+
+
+class TestUsernameResolverStmoGitHubMap:
+    """The bulk STMO map answers ahead of the per-user PMO lookups."""
+
+    @staticmethod
+    def _mapper(**logins: str) -> MagicMock:
+        """A mapper whose email -> login map is the given kwargs, keyed by local part."""
+        mapper = MagicMock(spec=StmoGitHubMapper)
+        by_email = {f"{local}@example.com": login for local, login in logins.items()}
+        mapper.login_for_email.side_effect = lambda email: by_email.get(email)
+        mapper.login_for_local_part.side_effect = lambda part: logins.get(part)
+        return mapper
+
+    def test_resolves_via_recorded_email_before_calling_pmo(self):
+        people = MagicMock()
+        resolver = UsernameResolver(
+            people,
+            github_mapper=self._mapper(userone="gh-one"),
+            user_emails={"phabone": "userone@example.com"},
+        )
+
+        user = resolver.resolve_username("phabone")
+
+        assert user is not None
+        assert user.username == "gh-one"
+        # No numeric ID: the STMO table doesn't carry one.
+        assert user.user_id is None
+        people.resolve_github.assert_not_called()
+
+    def test_falls_back_to_email_local_part(self):
+        people = MagicMock()
+        resolver = UsernameResolver(people, github_mapper=self._mapper(userone="gh-one"))
+
+        user = resolver.resolve_username("userone")
+
+        assert user is not None
+        assert user.username == "gh-one"
+        people.resolve_github.assert_not_called()
+
+    def test_uses_an_email_shaped_reviewer_target(self):
+        people = MagicMock()
+        resolver = UsernameResolver(people, github_mapper=self._mapper(userone="gh-one"))
+
+        user = resolver.resolve_username("userone@example.com")
+
+        assert user is not None
+        assert user.username == "gh-one"
+
+    def test_recorded_email_wins_over_local_part(self):
+        mapper = self._mapper(userone="gh-one", phabone="gh-other")
+        resolver = UsernameResolver(
+            MagicMock(),
+            github_mapper=mapper,
+            user_emails={"phabone": "userone@example.com"},
+        )
+
+        assert resolver.resolve_username("phabone").username == "gh-one"
+
+    def test_manual_mapping_still_wins(self):
+        resolver = UsernameResolver(
+            MagicMock(),
+            manual_mapping={"userone": GitHubUser(username="gh-manual", user_id=7)},
+            github_mapper=self._mapper(userone="gh-one"),
+        )
+
+        user = resolver.resolve_username("userone")
+
+        assert user.username == "gh-manual"
+        assert user.user_id == 7
+
+    def test_unknown_user_falls_through_to_pmo(self):
+        people = MagicMock()
+        people.resolve_github.return_value = GitHubResolution(username="gh-two", user_id=42)
+        resolver = UsernameResolver(people, github_mapper=self._mapper(userone="gh-one"))
+
+        user = resolver.resolve_username("usertwo")
+
+        assert user.username == "gh-two"
+        assert user.user_id == 42
+        people.resolve_github.assert_called_once()
+
+    def test_resolves_without_a_people_client(self):
+        resolver = UsernameResolver(None, github_mapper=self._mapper(userone="gh-one"))
+
+        assert resolver.resolve_username("userone").username == "gh-one"
+
+    def test_unknown_user_without_a_people_client_stays_unresolved(self):
+        resolver = UsernameResolver(None, github_mapper=self._mapper(userone="gh-one"))
+
+        assert resolver.resolve_username("usertwo") is None
+        assert resolver._unresolved["usertwo"] == "no_people_directory_cookie"
+
+    def test_result_is_cached(self):
+        mapper = self._mapper(userone="gh-one")
+        resolver = UsernameResolver(None, github_mapper=mapper)
+
+        resolver.resolve_username("userone")
+        resolver.resolve_username("userone")
+
+        assert mapper.login_for_local_part.call_count == 1
+
+    def test_query_failure_disables_the_map_and_falls_back(self):
+        mapper = MagicMock(spec=StmoGitHubMapper)
+        mapper.login_for_local_part.side_effect = StmoError("boom")
+        people = MagicMock()
+        people.resolve_github.return_value = GitHubResolution(username="gh-one", user_id=1)
+        resolver = UsernameResolver(people, github_mapper=mapper)
+
+        assert resolver.resolve_username("userone").username == "gh-one"
+        assert resolver.resolve_username("usertwo").username == "gh-one"
+
+        # Tried once, then dropped rather than retried for every user.
+        assert mapper.login_for_local_part.call_count == 1
+        assert resolver.github_mapper is None

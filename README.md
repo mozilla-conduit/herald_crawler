@@ -11,7 +11,8 @@ This tool extracts Herald rules from a Phabricator instance (specifically https:
 - Extracts all Herald rules with conditions and actions
 - Resolves PHIDs to usernames, emails, and group names
 - Fetches reviewer group membership from STMO's `phabricator_metrics.review_groups`
-- Resolves GitHub usernames optionally, so unattended runs need no browser session
+- Resolves GitHub usernames from STMO's `mozcloud.workgroup_subgroup_members`, falling back to
+  the People Directory, so unattended runs need no browser session
 - Outputs structured JSON with complete metadata
 - Uses Pydantic for data validation and type safety
 
@@ -75,6 +76,30 @@ Override the table with `--stmo-table`. Authentication follows
 Without STMO credentials no groups are collected, `groups` are empty and
 `metadata.scrape_status.groups_complete` is `false`.
 
+### GitHub usernames
+
+GitHub logins come from STMO's `mozcloud.workgroup_subgroup_members` table, which pairs a
+workgroup member with their GitHub account. One query pulls the whole directory:
+
+```sql
+SELECT DISTINCT value, github_login
+FROM mozcloud.workgroup_subgroup_members
+WHERE github_login IS NOT NULL
+```
+
+`value` holds either a member's email address or a nested group's name; only the addresses
+identify a person, so the rest are dropped. Override the table with `--stmo-github-table`.
+
+The map is keyed by email, while rules and groups name people by Phabricator username, so the
+two are joined through the `group_emails` the review groups query already returns. A user in no
+group falls back to matching the email local part, which is the Phabricator username for most
+people; local parts shared by several people with different logins are ambiguous and never
+match.
+
+This map takes precedence over the People Directory, which only sees the users it misses. It
+carries no numeric GitHub ID, so users it resolves get a `username` and no `user_id`.
+`--github-user-mapping` still wins over both.
+
 ### Unattended runs
 
 Every credential beyond the Phabricator session cookie is optional, so a scheduled run needs no
@@ -83,14 +108,15 @@ browser session other than `phsid`:
 | Credential | Needed for | Omitting it means |
 | --- | --- | --- |
 | `--phab-cookie` / `PHABRICATOR_SESSION_COOKIE` | scraping the rules themselves | required |
-| `--stmo-api-key` / `REDASH_API_KEY` | reviewer group membership | `groups` is empty, `groups_complete` is `false` |
+| `--stmo-api-key` / `REDASH_API_KEY` | reviewer group membership, and the bulk GitHub login map | `groups` is empty, `groups_complete` is `false`, and every GitHub username has to come from the People Directory |
 | `--conduit-token` / `PHABRICATOR_CONDUIT_TOKEN` | cross-checking GitHub resolution against Phabricator's Bugzilla ID and real name | resolution runs without the cross-check |
-| `--pmo-cookie` / `PEOPLE_MOZILLA_COOKIE` | resolving Phabricator users to GitHub users | `github_users` is empty, no People Directory requests |
+| `--pmo-cookie` / `PEOPLE_MOZILLA_COOKIE` | resolving the users the STMO map misses | only the STMO map and `--github-user-mapping` resolve users, no People Directory requests |
 
-GitHub resolution is the one step that needs an interactive People Directory cookie, so it is the
-step to drop for automation. Pass `--no-resolve-github` to skip it explicitly; omitting the cookie
-skips it too, with a warning. `--github-user-mapping` supplies overrides from a JSON file for users
-the automatic path can't resolve, without needing the cookie at all.
+The People Directory cookie is the only interactive credential, and it is now a fallback: the STMO
+map resolves most users on the API key alone, and whoever it misses is reported under
+`unresolved_users` rather than dropped. Pass `--no-resolve-github` to skip GitHub resolution
+entirely; omitting the cookie only skips the People Directory half of it, with a warning.
+`--github-user-mapping` supplies overrides from a JSON file for users neither source resolves.
 
 ## Development
 

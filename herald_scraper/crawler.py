@@ -26,6 +26,7 @@ from herald_scraper.models import (
 from herald_scraper.parsers import ListingPageParser, RuleDetailPageParser
 from herald_scraper.people_client import PeopleDirectoryClient
 from herald_scraper.resolvers import (
+    StmoGitHubMapper,
     StmoGroupCollector,
     UsernameResolver,
     extract_group_slugs_from_rules,
@@ -224,6 +225,7 @@ class HeraldCrawler:
         conduit_client: Optional[ConduitClient] = None,
         manual_github_mapping: Optional[Dict[str, GitHubUser]] = None,
         stmo_collector: Optional[StmoGroupCollector] = None,
+        stmo_github_mapper: Optional[StmoGitHubMapper] = None,
         resolve_github: bool = True,
     ) -> HeraldRulesOutput:
         """
@@ -248,9 +250,13 @@ class HeraldCrawler:
             manual_github_mapping: Optional Phab -> GitHub username overrides
             stmo_collector: Optional StmoGroupCollector for group membership.
                 Group collection is skipped when this is None.
+            stmo_github_mapper: Optional StmoGitHubMapper. Its bulk email ->
+                GitHub login map resolves users ahead of the People Directory,
+                joined to Phabricator usernames through the group membership
+                emails stmo_collector already fetched.
             resolve_github: If True (default), run GitHub resolution. It runs even
                 without a people_client, resolving from manual_github_mapping and
-                reporting everyone else as unresolved.
+                stmo_github_mapper, and reporting everyone else as unresolved.
 
         Returns:
             HeraldRulesOutput with all extracted rules, groups, and metadata
@@ -327,13 +333,21 @@ class HeraldCrawler:
                 logger.info("Resolving GitHub usernames for users")
             else:
                 logger.info(
-                    "Resolving GitHub usernames from manual overrides only "
-                    "(no PMO cookie); everyone else will be listed as unresolved"
+                    "Resolving GitHub usernames from the STMO map and manual "
+                    "overrides only (no PMO cookie); everyone else will be "
+                    "listed as unresolved"
                 )
+
+            # The join key into the STMO GitHub map: the same query that
+            # produced the groups also carries their members' emails.
+            user_emails = stmo_collector.fetch_user_emails() if stmo_collector else {}
+
             username_resolver = UsernameResolver(
                 people_client,
                 conduit_client=conduit_client,
                 manual_mapping=manual_github_mapping,
+                github_mapper=stmo_github_mapper,
+                user_emails=user_emails,
             )
 
             # Pre-populate the cache with successful resolutions only. Previously
@@ -353,9 +367,12 @@ class HeraldCrawler:
             # Rebuild unresolved list from resolver's state
             unresolved_users = new_unresolved
 
-            # Complete only if we saw every user and had a way to look them up;
-            # without a PMO cookie most users stay unresolved.
-            github_complete = not hit_max_users and people_client is not None
+            # Complete only if we saw every user and had a way to look them up.
+            # Without a PMO cookie the STMO map is the only broad source, so
+            # leaving nobody behind is what proves it was enough.
+            github_complete = not hit_max_users and (
+                people_client is not None or not unresolved_users
+            )
 
         # Emit groups and users in a stable, lexicographic order regardless of discovery order
         groups = dict(sorted(groups.items()))

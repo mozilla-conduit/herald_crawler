@@ -17,7 +17,11 @@ from herald_scraper.models import (
     ScrapeStatus,
     UnresolvedUser,
 )
-from herald_scraper.resolvers import StmoGroupCollector, UsernameResolver
+from herald_scraper.resolvers import (
+    StmoGitHubMapper,
+    StmoGroupCollector,
+    UsernameResolver,
+)
 from herald_scraper.stmo_client import StmoClient, StmoError
 
 __all__ = [
@@ -36,6 +40,7 @@ __all__ = [
     "ScrapeStatus",
     "StmoClient",
     "StmoError",
+    "StmoGitHubMapper",
     "StmoGroupCollector",
     "UnresolvedUser",
     "UsernameResolver",

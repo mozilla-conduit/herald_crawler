@@ -8,7 +8,11 @@ from unittest.mock import Mock
 
 from herald_scraper.client import HeraldClient
 from herald_scraper.people_client import GitHubResolution
-from herald_scraper.resolvers import StmoGroupCollector, extract_group_slugs_from_rules
+from herald_scraper.resolvers import (
+    StmoGitHubMapper,
+    StmoGroupCollector,
+    extract_group_slugs_from_rules,
+)
 from herald_scraper.crawler import (
     HeraldCrawler,
     _sort_rule_ids,
@@ -1142,3 +1146,104 @@ class TestGithubResolutionWithoutPmoCookie:
 
         assert output.github_users == {}
         assert output.unresolved_users == []
+
+
+class TestGithubResolutionViaStmoMap:
+    """Tests for wiring GitHub resolution to the STMO email -> login map."""
+
+    @staticmethod
+    def _crawler(rule_h420_html: str) -> HeraldCrawler:
+        mock_client = Mock(spec=HeraldClient)
+        mock_client.base_url = "https://phabricator.example.com"
+        mock_client.fetch_listing.return_value = '<html><body><a href="/H420">H420</a></body></html>'
+        mock_client.fetch_rule.return_value = rule_h420_html
+        return HeraldCrawler(client=mock_client)
+
+    @staticmethod
+    def _mapper(by_email: dict, by_local_part: dict) -> Mock:
+        mapper = Mock(spec=StmoGitHubMapper)
+        mapper.login_for_email.side_effect = by_email.get
+        mapper.login_for_local_part.side_effect = by_local_part.get
+        return mapper
+
+    def test_resolves_users_without_a_pmo_cookie(self, rule_h420_html: str) -> None:
+        crawler = self._crawler(rule_h420_html)
+        author = crawler.extract_rules(["H420"])[0].author
+
+        output = crawler.extract_all_rules(
+            global_only=False,
+            extract_groups=False,
+            people_client=None,
+            stmo_github_mapper=self._mapper({}, {author: "gh-author"}),
+        )
+
+        assert output.github_users[author].username == "gh-author"
+        # The table carries no numeric ID, so none is invented.
+        assert output.github_users[author].user_id is None
+
+    def test_group_emails_are_used_as_the_join_key(self, rule_h420_html: str) -> None:
+        crawler = self._crawler(rule_h420_html)
+        author = crawler.extract_rules(["H420"])[0].author
+
+        collector = Mock(spec=StmoGroupCollector)
+        collector.collect_all_groups.return_value = {}
+        collector.fetch_user_emails.return_value = {author: "author@example.com"}
+
+        output = crawler.extract_all_rules(
+            global_only=False,
+            extract_groups=True,
+            people_client=None,
+            stmo_collector=collector,
+            stmo_github_mapper=self._mapper({"author@example.com": "gh-author"}, {}),
+        )
+
+        assert output.github_users[author].username == "gh-author"
+
+    def test_github_complete_without_a_cookie_when_nobody_is_left(
+        self, rule_h420_html: str
+    ) -> None:
+        crawler = self._crawler(rule_h420_html)
+        mapper = Mock(spec=StmoGitHubMapper)
+        mapper.login_for_email.return_value = None
+        mapper.login_for_local_part.side_effect = lambda part: f"gh-{part}"
+
+        output = crawler.extract_all_rules(
+            global_only=False,
+            extract_groups=False,
+            people_client=None,
+            stmo_github_mapper=mapper,
+        )
+
+        assert output.unresolved_users == []
+        assert output.metadata is not None
+        assert output.metadata.scrape_status is not None
+        assert output.metadata.scrape_status.github_complete is True
+
+    def test_pmo_still_handles_whoever_the_map_misses(self, rule_h420_html: str) -> None:
+        crawler = self._crawler(rule_h420_html)
+        author = crawler.extract_rules(["H420"])[0].author
+
+        people_client = Mock()
+        people_client.resolve_github.return_value = GitHubResolution(
+            username="gh-from-pmo", user_id=99
+        )
+
+        output = crawler.extract_all_rules(
+            global_only=False,
+            extract_groups=False,
+            people_client=people_client,
+            stmo_github_mapper=self._mapper({}, {}),
+        )
+
+        assert output.github_users[author].username == "gh-from-pmo"
+        assert output.github_users[author].user_id == 99
+
+    def test_no_mapper_leaves_resolution_unchanged(self, rule_h420_html: str) -> None:
+        output = self._crawler(rule_h420_html).extract_all_rules(
+            global_only=False,
+            extract_groups=False,
+            people_client=None,
+        )
+
+        assert output.github_users == {}
+        assert all(u.reason == "no_people_directory_cookie" for u in output.unresolved_users)

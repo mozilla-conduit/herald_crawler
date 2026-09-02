@@ -207,6 +207,112 @@ class TestStmoGroupCollectorFetchAllGroups:
         assert collector.fetch_all_groups()["alpha-reviewers"].members == []
 
 
+class TestStmoGroupCollectorFetchUserEmails:
+    """Tests for StmoGroupCollector.fetch_user_emails()."""
+
+    def test_pairs_usernames_with_emails(
+        self, collector: StmoGroupCollector, mock_stmo_client: MagicMock
+    ) -> None:
+        mock_stmo_client.run_query.return_value = [
+            review_group_row(
+                "alpha-reviewers",
+                usernames=["userone", "usertwo"],
+                emails=["UserOne@Example.com", "usertwo@example.com"],
+            )
+        ]
+
+        assert collector.fetch_user_emails() == {
+            "userone": "userone@example.com",
+            "usertwo": "usertwo@example.com",
+        }
+
+    def test_merges_across_groups(
+        self, collector: StmoGroupCollector, mock_stmo_client: MagicMock
+    ) -> None:
+        mock_stmo_client.run_query.return_value = [
+            review_group_row(
+                "alpha-reviewers", usernames=["userone"], emails=["userone@example.com"]
+            ),
+            review_group_row(
+                "beta-reviewers", usernames=["usertwo"], emails=["usertwo@example.com"]
+            ),
+        ]
+
+        assert sorted(collector.fetch_user_emails()) == ["userone", "usertwo"]
+
+    def test_drops_rows_whose_arrays_disagree_in_length(
+        self, collector: StmoGroupCollector, mock_stmo_client: MagicMock
+    ) -> None:
+        mock_stmo_client.run_query.return_value = [
+            review_group_row(
+                "alpha-reviewers",
+                usernames=["userone", "usertwo"],
+                emails=["userone@example.com"],
+            ),
+            review_group_row(
+                "beta-reviewers", usernames=["userthree"], emails=["userthree@example.com"]
+            ),
+        ]
+
+        assert collector.fetch_user_emails() == {"userthree": "userthree@example.com"}
+
+    def test_ignores_non_email_values(
+        self, collector: StmoGroupCollector, mock_stmo_client: MagicMock
+    ) -> None:
+        mock_stmo_client.run_query.return_value = [
+            review_group_row(
+                "alpha-reviewers",
+                usernames=["userone", "usertwo"],
+                emails=["not-an-email", "usertwo@example.com"],
+            )
+        ]
+
+        assert collector.fetch_user_emails() == {"usertwo": "usertwo@example.com"}
+
+    def test_keeps_first_of_conflicting_emails(
+        self, collector: StmoGroupCollector, mock_stmo_client: MagicMock
+    ) -> None:
+        mock_stmo_client.run_query.return_value = [
+            review_group_row(
+                "alpha-reviewers", usernames=["userone"], emails=["userone@example.com"]
+            ),
+            review_group_row(
+                "beta-reviewers", usernames=["userone"], emails=["userone@example.org"]
+            ),
+        ]
+
+        assert collector.fetch_user_emails() == {"userone": "userone@example.com"}
+
+    def test_shares_the_group_query(
+        self, collector: StmoGroupCollector, mock_stmo_client: MagicMock
+    ) -> None:
+        mock_stmo_client.run_query.return_value = [
+            review_group_row(
+                "alpha-reviewers", usernames=["userone"], emails=["userone@example.com"]
+            )
+        ]
+
+        collector.fetch_all_groups()
+        collector.fetch_user_emails()
+
+        assert mock_stmo_client.run_query.call_count == 1
+
+    def test_cleared_along_with_the_group_cache(
+        self, collector: StmoGroupCollector, mock_stmo_client: MagicMock
+    ) -> None:
+        mock_stmo_client.run_query.return_value = [
+            review_group_row(
+                "alpha-reviewers", usernames=["userone"], emails=["userone@example.com"]
+            )
+        ]
+        collector.fetch_user_emails()
+
+        collector.clear_cache()
+        mock_stmo_client.run_query.return_value = []
+
+        assert collector.fetch_user_emails() == {}
+
+
 class TestStmoGroupCollectorCollectAllGroups:
     """Tests for StmoGroupCollector.collect_all_groups()."""
 
