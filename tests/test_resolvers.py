@@ -727,11 +727,21 @@ class TestUsernameResolverStmoGitHubMap:
 
     @staticmethod
     def _mapper(**logins: str) -> MagicMock:
-        """A mapper whose email -> login map is the given kwargs, keyed by local part."""
+        """A mapper knowing the given users by email local part only.
+
+        Keying on the local part, and not the LDAP username, keeps these
+        cases exercising the email and local-part fallbacks; the
+        username-first path has its own tests below.
+        """
         mapper = MagicMock(spec=StmoGitHubMapper)
-        by_email = {f"{local}@example.com": login for local, login in logins.items()}
-        mapper.login_for_email.side_effect = lambda email: by_email.get(email)
-        mapper.login_for_local_part.side_effect = lambda part: logins.get(part)
+        users = {
+            local: GitHubUser(username=login, user_id=index)
+            for index, (local, login) in enumerate(logins.items(), start=1)
+        }
+        by_email = {f"{local}@example.com": user for local, user in users.items()}
+        mapper.user_for_username.return_value = None
+        mapper.user_for_email.side_effect = lambda email: by_email.get(email)
+        mapper.user_for_local_part.side_effect = lambda part: users.get(part)
         return mapper
 
     def test_resolves_via_recorded_email_before_calling_pmo(self):
@@ -746,8 +756,8 @@ class TestUsernameResolverStmoGitHubMap:
 
         assert user is not None
         assert user.username == "gh-one"
-        # No numeric ID: the STMO table doesn't carry one.
-        assert user.user_id is None
+        # The staff table carries the numeric ID alongside the username.
+        assert user.user_id == 1
         people.resolve_github.assert_not_called()
 
     def test_falls_back_to_email_local_part(self):
@@ -820,11 +830,11 @@ class TestUsernameResolverStmoGitHubMap:
         resolver.resolve_username("userone")
         resolver.resolve_username("userone")
 
-        assert mapper.login_for_local_part.call_count == 1
+        assert mapper.user_for_local_part.call_count == 1
 
     def test_query_failure_disables_the_map_and_falls_back(self):
         mapper = MagicMock(spec=StmoGitHubMapper)
-        mapper.login_for_local_part.side_effect = StmoError("boom")
+        mapper.user_for_username.side_effect = StmoError("boom")
         people = MagicMock()
         people.resolve_github.return_value = GitHubResolution(username="gh-one", user_id=1)
         resolver = UsernameResolver(people, github_mapper=mapper)
@@ -833,5 +843,33 @@ class TestUsernameResolverStmoGitHubMap:
         assert resolver.resolve_username("usertwo").username == "gh-one"
 
         # Tried once, then dropped rather than retried for every user.
-        assert mapper.login_for_local_part.call_count == 1
+        assert mapper.user_for_username.call_count == 1
         assert resolver.github_mapper is None
+
+    def test_resolves_by_phabricator_username_without_an_email(self):
+        """The Phab username is the LDAP one for most people."""
+        mapper = MagicMock(spec=StmoGitHubMapper)
+        mapper.user_for_username.side_effect = lambda name: (
+            GitHubUser(username="gh-one", user_id=1) if name == "phabone" else None
+        )
+        people = MagicMock()
+        resolver = UsernameResolver(people, github_mapper=mapper)
+
+        user = resolver.resolve_username("phabone")
+
+        assert user == GitHubUser(username="gh-one", user_id=1)
+        mapper.user_for_email.assert_not_called()
+        mapper.user_for_local_part.assert_not_called()
+        people.resolve_github.assert_not_called()
+
+    def test_username_match_wins_over_the_recorded_email(self):
+        mapper = MagicMock(spec=StmoGitHubMapper)
+        mapper.user_for_username.return_value = GitHubUser(username="gh-ldap", user_id=1)
+        mapper.user_for_email.return_value = GitHubUser(username="gh-email", user_id=2)
+        resolver = UsernameResolver(
+            MagicMock(),
+            github_mapper=mapper,
+            user_emails={"phabone": "userone@example.com"},
+        )
+
+        assert resolver.resolve_username("phabone").username == "gh-ldap"

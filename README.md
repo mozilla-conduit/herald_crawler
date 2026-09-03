@@ -11,8 +11,8 @@ This tool extracts Herald rules from a Phabricator instance (specifically https:
 - Extracts all Herald rules with conditions and actions
 - Resolves PHIDs to usernames, emails, and group names
 - Fetches reviewer group membership from STMO's `phabricator_metrics.review_groups`
-- Resolves GitHub usernames from STMO's `mozcloud.workgroup_subgroup_members`, falling back to
-  the People Directory, so unattended runs need no browser session
+- Resolves GitHub usernames and IDs from STMO's `mozcloud.person_api_staff_members`, falling
+  back to the People Directory, so unattended runs need no browser session
 - Outputs structured JSON with complete metadata
 - Uses Pydantic for data validation and type safety
 
@@ -78,26 +78,28 @@ Without STMO credentials no groups are collected, `groups` are empty and
 
 ### GitHub usernames
 
-GitHub logins come from STMO's `mozcloud.workgroup_subgroup_members` table, which pairs a
-workgroup member with their GitHub account. One query pulls the whole directory:
+GitHub accounts come from STMO's `mozcloud.person_api_staff_members` table, which pairs a
+staff member's LDAP username and email with their GitHub username and numeric ID. One query
+pulls the whole directory:
 
 ```sql
-SELECT DISTINCT value, github_login
-FROM mozcloud.workgroup_subgroup_members
-WHERE github_login IS NOT NULL
+SELECT DISTINCT email, username, github_username, github_id
+FROM mozcloud.person_api_staff_members
+WHERE github_username IS NOT NULL OR github_id IS NOT NULL
 ```
 
-`value` holds either a member's email address or a nested group's name; only the addresses
-identify a person, so the rest are dropped. Override the table with `--stmo-github-table`.
+Rows describing someone with no GitHub account are dropped. Override the table with
+`--stmo-github-table`.
 
-The map is keyed by email, while rules and groups name people by Phabricator username, so the
-two are joined through the `group_emails` the review groups query already returns. A user in no
-group falls back to matching the email local part, which is the Phabricator username for most
-people; local parts shared by several people with different logins are ambiguous and never
-match.
+Rules and groups name people by Phabricator username, which is the LDAP `username` for most
+people, so that is matched first and answers without any further lookup. Failing that, the
+user is joined by email — through the `group_emails` the review groups query already returns,
+or through a reviewer target that is itself an address — and finally by email local part;
+local parts shared by several people with different accounts are ambiguous and never match.
 
-This map takes precedence over the People Directory, which only sees the users it misses. It
-carries no numeric GitHub ID, so users it resolves get a `username` and no `user_id`.
+This directory takes precedence over the People Directory, which only sees the users it
+misses. It carries both the GitHub username and the numeric ID, so users it resolves get a
+`username` and a `user_id`.
 `--github-user-mapping` still wins over both.
 
 ### Unattended runs

@@ -1161,9 +1161,21 @@ class TestGithubResolutionViaStmoMap:
 
     @staticmethod
     def _mapper(by_email: dict, by_local_part: dict) -> Mock:
+        """A mapper knowing the given ``key -> GitHub username`` pairs.
+
+        Nothing is keyed by LDAP username, so these cases exercise the email
+        and local-part fallbacks the crawler wires up.
+        """
+
+        def as_user(login):
+            return GitHubUser(username=login) if login else None
+
         mapper = Mock(spec=StmoGitHubMapper)
-        mapper.login_for_email.side_effect = by_email.get
-        mapper.login_for_local_part.side_effect = by_local_part.get
+        mapper.user_for_username.return_value = None
+        mapper.user_for_email.side_effect = lambda email: as_user(by_email.get(email))
+        mapper.user_for_local_part.side_effect = lambda part: as_user(
+            by_local_part.get(part)
+        )
         return mapper
 
     def test_resolves_users_without_a_pmo_cookie(self, rule_h420_html: str) -> None:
@@ -1178,8 +1190,6 @@ class TestGithubResolutionViaStmoMap:
         )
 
         assert output.github_users[author].username == "gh-author"
-        # The table carries no numeric ID, so none is invented.
-        assert output.github_users[author].user_id is None
 
     def test_group_emails_are_used_as_the_join_key(self, rule_h420_html: str) -> None:
         crawler = self._crawler(rule_h420_html)
@@ -1204,8 +1214,11 @@ class TestGithubResolutionViaStmoMap:
     ) -> None:
         crawler = self._crawler(rule_h420_html)
         mapper = Mock(spec=StmoGitHubMapper)
-        mapper.login_for_email.return_value = None
-        mapper.login_for_local_part.side_effect = lambda part: f"gh-{part}"
+        mapper.user_for_username.return_value = None
+        mapper.user_for_email.return_value = None
+        mapper.user_for_local_part.side_effect = lambda part: GitHubUser(
+            username=f"gh-{part}", user_id=1
+        )
 
         output = crawler.extract_all_rules(
             global_only=False,
