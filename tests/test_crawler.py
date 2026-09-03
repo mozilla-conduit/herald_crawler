@@ -1176,6 +1176,7 @@ class TestGithubResolutionViaStmoMap:
         mapper.user_for_local_part.side_effect = lambda part: as_user(
             by_local_part.get(part)
         )
+        mapper.user_for_bugzilla_id.return_value = None
         return mapper
 
     def test_resolves_users_without_a_pmo_cookie(self, rule_h420_html: str) -> None:
@@ -1216,6 +1217,7 @@ class TestGithubResolutionViaStmoMap:
         mapper = Mock(spec=StmoGitHubMapper)
         mapper.user_for_username.return_value = None
         mapper.user_for_email.return_value = None
+        mapper.user_for_bugzilla_id.return_value = None
         mapper.user_for_local_part.side_effect = lambda part: GitHubUser(
             username=f"gh-{part}", user_id=1
         )

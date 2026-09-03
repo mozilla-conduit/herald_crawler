@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from herald_scraper.conduit_client import ConduitClient
 from herald_scraper.exceptions import RateLimitError
@@ -304,13 +304,15 @@ class StmoGitHubMapper:
     """Maps Mozilla staff to their GitHub account from an STMO table.
 
     ``mozcloud.person_api_staff_members`` has one row per staff member,
-    pairing their LDAP username and email with their GitHub username and
-    numeric ID. One query pulls the whole directory, so it covers most
-    people without the per-user People Directory lookups it fronts.
+    pairing their LDAP username, email and Bugzilla account with their
+    GitHub username and numeric ID. One query pulls the whole directory, so
+    it covers most people without the per-user People Directory lookups it
+    fronts.
 
-    Rows are indexed three ways, so a Phabricator username usually matches
-    without any fuzzy search: by LDAP username, by email address, and by
-    email local part.
+    Rows are indexed four ways, so a Phabricator user usually matches
+    without any fuzzy search: by LDAP username, by email address (either the
+    LDAP or the Bugzilla one), by email local part, and by Bugzilla account
+    id.
 
     Example:
         mapper = StmoGitHubMapper(StmoClient(api_key="..."))
@@ -340,6 +342,7 @@ class StmoGitHubMapper:
         self._users_by_email: Optional[Dict[str, GitHubUser]] = None
         self._users_by_username: Dict[str, GitHubUser] = {}
         self._users_by_local_part: Dict[str, GitHubUser] = {}
+        self._users_by_bugzilla_id: Dict[str, GitHubUser] = {}
 
     def user_for_username(self, username: str) -> Optional[GitHubUser]:
         """
@@ -365,6 +368,9 @@ class StmoGitHubMapper:
     def user_for_email(self, email: str) -> Optional[GitHubUser]:
         """
         Look up a GitHub account by exact email address (case-insensitive).
+
+        Both the LDAP address and the Bugzilla one are indexed, since a
+        Phabricator account is keyed on the latter as often as the former.
 
         Args:
             email: Email address to look up
@@ -402,12 +408,36 @@ class StmoGitHubMapper:
         self.fetch_all_users()
         return self._users_by_local_part.get(local_part.strip().lower())
 
+    def user_for_bugzilla_id(self, bugzilla_id: str) -> Optional[GitHubUser]:
+        """
+        Look up a GitHub account by Bugzilla account id.
+
+        Phabricator links each user to their Bugzilla account, so this id is
+        an exact join key for people whose Phabricator username and email
+        both diverge from their LDAP ones -- exactly the users the People
+        Directory would otherwise have to find by fuzzy search.
+
+        Args:
+            bugzilla_id: Numeric Bugzilla account id, as a string
+
+        Returns:
+            GitHubUser, or None if the id isn't in the table
+
+        Raises:
+            StmoError: If the query fails
+        """
+        key = _normalize_bugzilla_id(bugzilla_id)
+        if not key:
+            return None
+        self.fetch_all_users()
+        return self._users_by_bugzilla_id.get(key)
+
     def fetch_all_users(self) -> Dict[str, GitHubUser]:
         """
         Fetch the whole ``email -> GitHubUser`` map, keyed by lowercase email.
 
-        Building it also populates the username and local-part indexes. The
-        result is cached, so repeated calls run a single query.
+        Building it also populates the username, local-part and Bugzilla id
+        indexes. The result is cached, so repeated calls run a single query.
 
         Raises:
             StmoError: If the query fails
@@ -421,7 +451,8 @@ class StmoGitHubMapper:
     def build_query(self) -> str:
         """Build the SQL selecting every staff member with a GitHub account."""
         return (
-            "SELECT DISTINCT email, username, github_username, github_id\n"
+            "SELECT DISTINCT email, username, bugzilla_email, bugzilla_id, "
+            "github_username, github_id\n"
             f"FROM {self.table}\n"
             "WHERE github_username IS NOT NULL OR github_id IS NOT NULL"
         )
@@ -431,17 +462,21 @@ class StmoGitHubMapper:
         self._users_by_email = None
         self._users_by_username = {}
         self._users_by_local_part = {}
+        self._users_by_bugzilla_id = {}
         logger.debug("STMO GitHub mapper cache cleared")
 
     def _index_rows(self, rows: List[Dict[str, object]]) -> None:
-        """Index query rows by email, LDAP username, and email local part.
+        """Index query rows by email, LDAP username, and Bugzilla account id.
 
         Rows carrying neither a GitHub username nor a GitHub ID describe
-        someone we cannot resolve, so they are dropped; a row missing an
-        email or a username is still indexed under whichever it has.
+        someone we cannot resolve, so they are dropped; a row missing any one
+        key is still indexed under the others it has. The Bugzilla address is
+        folded into the email index alongside the LDAP one, which also widens
+        the local-part index derived from it.
         """
         by_email: Dict[str, GitHubUser] = {}
         by_username: Dict[str, GitHubUser] = {}
+        by_bugzilla_id: Dict[str, GitHubUser] = {}
         skipped = 0
 
         for row in rows:
@@ -450,22 +485,28 @@ class StmoGitHubMapper:
                 skipped += 1
                 continue
 
-            email = _clean_cell(row.get("email"))
-            if email and _looks_like_email(email):
-                self._record(by_email, email.lower(), github_user, "email")
+            for column in ("email", "bugzilla_email"):
+                email = _clean_cell(row.get(column))
+                if email and _looks_like_email(email):
+                    self._record(by_email, email.lower(), github_user, column)
 
             username = _clean_cell(row.get("username"))
             if username:
                 self._record(by_username, username.lower(), github_user, "username")
 
+            bugzilla_id = _normalize_bugzilla_id(row.get("bugzilla_id"))
+            if bugzilla_id:
+                self._record(by_bugzilla_id, bugzilla_id, github_user, "bugzilla_id")
+
         self._users_by_email = by_email
         self._users_by_username = by_username
+        self._users_by_bugzilla_id = by_bugzilla_id
         self._users_by_local_part = self._index_by_local_part(by_email)
 
         logger.info(
-            f"Loaded {len(by_email)} email and {len(by_username)} username -> "
-            f"GitHub account pairs from {self.table} ({skipped} rows without a "
-            f"GitHub account skipped)"
+            f"Loaded {len(by_email)} email, {len(by_username)} username and "
+            f"{len(by_bugzilla_id)} Bugzilla id -> GitHub account pairs from "
+            f"{self.table} ({skipped} rows without a GitHub account skipped)"
         )
 
     def _record(
@@ -512,6 +553,25 @@ def _clean_cell(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _normalize_bugzilla_id(value: object) -> str:
+    """Normalize a Bugzilla account id to its canonical digit string.
+
+    The id is a number in the staff table but a string from Phabricator's
+    ``bugzilla.account.search``, and BigQuery hands back whole numbers as
+    ``219880.0`` often enough to matter, so both sides are folded through
+    ``int`` before they are compared. A non-numeric id is passed through as
+    written rather than dropped, so an unexpected format still matches
+    itself.
+    """
+    text = _clean_cell(value)
+    if not text:
+        return ""
+    try:
+        return str(int(float(text)))
+    except ValueError:
+        return text
 
 
 def _github_user_from_row(row: Dict[str, object]) -> Optional[GitHubUser]:
@@ -623,7 +683,9 @@ class UsernameResolver:
             github_mapper: Optional StmoGitHubMapper. Its bulk staff
                 directory is consulted before the People Directory, since it
                 answers for most users off a single query, with both the
-                GitHub username and its numeric ID.
+                GitHub username and its numeric ID. Whoever it cannot match
+                by name or email is tried again by Bugzilla account id, once
+                ``conduit_client`` has supplied one.
             user_emails: Optional ``phab_username -> email`` map used as a
                 secondary join key into ``github_mapper``, typically
                 ``StmoGroupCollector.fetch_user_emails()``.
@@ -792,12 +854,20 @@ class UsernameResolver:
         # username and its numeric ID.
         stmo_user = self._github_user_from_stmo(username, lookup_name)
         if stmo_user:
-            self._cache[lookup_name] = stmo_user
-            logger.debug(
-                f"STMO GitHub map: {lookup_name} -> {stmo_user.username} "
-                f"(ID: {stmo_user.user_id})"
-            )
-            return stmo_user
+            return self._accept_stmo_user(lookup_name, stmo_user, "name or email")
+
+        # Conduit, not PMO, so it stays outside the rate-limit retry loop. It
+        # runs before the PMO-cookie check because the Bugzilla id it returns
+        # is itself an exact key into the STMO directory, for users whose
+        # Phabricator name and email both diverge from their LDAP ones.
+        expected_bmo_id, expected_real_name = self._fetch_phab_info(lookup_name)
+
+        if expected_bmo_id:
+            stmo_user = self._github_user_by_bugzilla_id(expected_bmo_id)
+            if stmo_user:
+                return self._accept_stmo_user(
+                    lookup_name, stmo_user, f"Bugzilla id {expected_bmo_id}"
+                )
 
         # No People Directory access: record the user as unresolved instead of
         # dropping them, so the output still lists who needs a manual mapping.
@@ -805,9 +875,6 @@ class UsernameResolver:
             self._unresolved[lookup_name] = "no_people_directory_cookie"
             logger.debug(f"No PMO cookie, cannot resolve {lookup_name}")
             return None
-
-        # Conduit, not PMO, so it stays outside the rate-limit retry loop.
-        expected_bmo_id, expected_real_name = self._fetch_phab_info(lookup_name)
 
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
             try:
@@ -852,16 +919,21 @@ class UsernameResolver:
 
         return None  # pragma: no cover - loop always returns or continues
 
-    def _github_user_from_stmo(
-        self, username: str, lookup_name: str
-    ) -> Optional[GitHubUser]:
-        """Look a user up in STMO's staff directory.
+    def _accept_stmo_user(
+        self, lookup_name: str, user: GitHubUser, via: str
+    ) -> GitHubUser:
+        """Cache and log a user the STMO directory answered for."""
+        self._cache[lookup_name] = user
+        logger.debug(
+            f"STMO GitHub map ({via}): {lookup_name} -> {user.username} "
+            f"(ID: {user.user_id})"
+        )
+        return user
 
-        The Phab username is tried against the directory's LDAP username
-        first, which matches most people outright. Failing that, the user is
-        translated to an email -- via the group membership emails, or via the
-        reviewer target itself when a rule already names an address -- and
-        finally matched on the email local part.
+    def _ask_mapper(
+        self, ask: Callable[[StmoGitHubMapper], Optional[GitHubUser]]
+    ) -> Optional[GitHubUser]:
+        """Run one lookup against the STMO directory, if it is still usable.
 
         A failed query disables the mapper rather than being retried for
         every remaining user; resolution carries on through PMO.
@@ -869,19 +941,44 @@ class UsernameResolver:
         if self.github_mapper is None:
             return None
 
-        email = self.user_emails.get(lookup_name)
-        if not email and _looks_like_email(username):
-            email = username
-
         try:
-            found = self.github_mapper.user_for_username(lookup_name)
-            if not found and email:
-                found = self.github_mapper.user_for_email(email)
-            return found or self.github_mapper.user_for_local_part(lookup_name)
+            return ask(self.github_mapper)
         except Exception as e:
             logger.warning(f"STMO GitHub map unavailable, falling back to PMO: {e}")
             self.github_mapper = None
             return None
+
+    def _github_user_from_stmo(
+        self, username: str, lookup_name: str
+    ) -> Optional[GitHubUser]:
+        """Look a user up in STMO's staff directory by name or email.
+
+        The Phab username is tried against the directory's LDAP username
+        first, which matches most people outright. Failing that, the user is
+        translated to an email -- via the group membership emails, or via the
+        reviewer target itself when a rule already names an address -- and
+        finally matched on the email local part.
+        """
+        email = self.user_emails.get(lookup_name)
+        if not email and _looks_like_email(username):
+            email = username
+
+        def ask(mapper: StmoGitHubMapper) -> Optional[GitHubUser]:
+            found = mapper.user_for_username(lookup_name)
+            if not found and email:
+                found = mapper.user_for_email(email)
+            return found or mapper.user_for_local_part(lookup_name)
+
+        return self._ask_mapper(ask)
+
+    def _github_user_by_bugzilla_id(self, bugzilla_id: str) -> Optional[GitHubUser]:
+        """Look a user up in STMO's staff directory by Bugzilla account id.
+
+        This is the last exact key available before PMO, and it replaces
+        PMO's own BMO-id fallback, which only reaches an id after a fuzzy
+        search plus one profile request per candidate it turns up.
+        """
+        return self._ask_mapper(lambda mapper: mapper.user_for_bugzilla_id(bugzilla_id))
 
     def resolve_all(
         self,

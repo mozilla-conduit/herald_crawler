@@ -742,6 +742,7 @@ class TestUsernameResolverStmoGitHubMap:
         mapper.user_for_username.return_value = None
         mapper.user_for_email.side_effect = lambda email: by_email.get(email)
         mapper.user_for_local_part.side_effect = lambda part: users.get(part)
+        mapper.user_for_bugzilla_id.return_value = None
         return mapper
 
     def test_resolves_via_recorded_email_before_calling_pmo(self):
@@ -861,6 +862,73 @@ class TestUsernameResolverStmoGitHubMap:
         mapper.user_for_email.assert_not_called()
         mapper.user_for_local_part.assert_not_called()
         people.resolve_github.assert_not_called()
+
+    def test_resolves_by_bugzilla_id_when_name_and_email_both_miss(self):
+        """Phab supplies the BMO id; the staff table turns it into an account."""
+        mapper = MagicMock(spec=StmoGitHubMapper)
+        mapper.user_for_username.return_value = None
+        mapper.user_for_email.return_value = None
+        mapper.user_for_local_part.return_value = None
+        mapper.user_for_bugzilla_id.side_effect = lambda bmo_id: (
+            GitHubUser(username="gh-one", user_id=1) if bmo_id == "219880" else None
+        )
+        conduit = MagicMock()
+        conduit.user_search.return_value = [
+            {"phid": "PHID-USER-x", "fields": {"realName": "Aaa Bbb"}}
+        ]
+        conduit.bugzilla_account_search.return_value = [{"id": 219880}]
+        people = MagicMock()
+        resolver = UsernameResolver(people, conduit_client=conduit, github_mapper=mapper)
+
+        user = resolver.resolve_username("phabone")
+
+        assert user == GitHubUser(username="gh-one", user_id=1)
+        mapper.user_for_bugzilla_id.assert_called_once_with("219880")
+        people.resolve_github.assert_not_called()
+
+    def test_bugzilla_id_path_works_without_a_people_client(self):
+        mapper = MagicMock(spec=StmoGitHubMapper)
+        mapper.user_for_username.return_value = None
+        mapper.user_for_email.return_value = None
+        mapper.user_for_local_part.return_value = None
+        mapper.user_for_bugzilla_id.return_value = GitHubUser(username="gh-one", user_id=1)
+        conduit = MagicMock()
+        conduit.user_search.return_value = [{"phid": "PHID-USER-x", "fields": {}}]
+        conduit.bugzilla_account_search.return_value = [{"id": 219880}]
+        resolver = UsernameResolver(None, conduit_client=conduit, github_mapper=mapper)
+
+        assert resolver.resolve_username("phabone").username == "gh-one"
+
+    def test_name_or_email_match_skips_the_bugzilla_lookup(self):
+        """A hit on the cheap keys must not cost a Conduit round trip."""
+        conduit = MagicMock()
+        mapper = self._mapper(userone="gh-one")
+        resolver = UsernameResolver(MagicMock(), conduit_client=conduit, github_mapper=mapper)
+
+        assert resolver.resolve_username("userone").username == "gh-one"
+        conduit.user_search.assert_not_called()
+        mapper.user_for_bugzilla_id.assert_not_called()
+
+    def test_unknown_bugzilla_id_falls_through_to_pmo(self):
+        mapper = MagicMock(spec=StmoGitHubMapper)
+        mapper.user_for_username.return_value = None
+        mapper.user_for_email.return_value = None
+        mapper.user_for_local_part.return_value = None
+        mapper.user_for_bugzilla_id.return_value = None
+        conduit = MagicMock()
+        conduit.user_search.return_value = [
+            {"phid": "PHID-USER-x", "fields": {"realName": "Aaa Bbb"}}
+        ]
+        conduit.bugzilla_account_search.return_value = [{"id": 219880}]
+        people = MagicMock()
+        people.resolve_github.return_value = GitHubResolution(username="gh-pmo", user_id=42)
+        resolver = UsernameResolver(people, conduit_client=conduit, github_mapper=mapper)
+
+        assert resolver.resolve_username("phabone").username == "gh-pmo"
+        # The id Phab already fetched is still handed to PMO to cross-check.
+        people.resolve_github.assert_called_once_with(
+            "phabone", expected_bmo_id="219880", expected_real_name="Aaa Bbb"
+        )
 
     def test_username_match_wins_over_the_recorded_email(self):
         mapper = MagicMock(spec=StmoGitHubMapper)

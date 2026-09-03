@@ -252,8 +252,9 @@ class HeraldCrawler:
                 Group collection is skipped when this is None.
             stmo_github_mapper: Optional StmoGitHubMapper. Its bulk staff
                 directory resolves users ahead of the People Directory, matched
-                on the Phabricator username itself and, failing that, on the
-                group membership emails stmo_collector already fetched.
+                on the Phabricator username itself, then on the group membership
+                emails stmo_collector already fetched, then on the Bugzilla
+                account id conduit_client reports for the user.
             resolve_github: If True (default), run GitHub resolution. It runs even
                 without a people_client, resolving from manual_github_mapping and
                 stmo_github_mapper, and reporting everyone else as unresolved.

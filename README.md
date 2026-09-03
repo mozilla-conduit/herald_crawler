@@ -79,11 +79,11 @@ Without STMO credentials no groups are collected, `groups` are empty and
 ### GitHub usernames
 
 GitHub accounts come from STMO's `mozcloud.person_api_staff_members` table, which pairs a
-staff member's LDAP username and email with their GitHub username and numeric ID. One query
-pulls the whole directory:
+staff member's LDAP username, email and Bugzilla account with their GitHub username and
+numeric ID. One query pulls the whole directory:
 
 ```sql
-SELECT DISTINCT email, username, github_username, github_id
+SELECT DISTINCT email, username, bugzilla_email, bugzilla_id, github_username, github_id
 FROM mozcloud.person_api_staff_members
 WHERE github_username IS NOT NULL OR github_id IS NOT NULL
 ```
@@ -92,14 +92,25 @@ Rows describing someone with no GitHub account are dropped. Override the table w
 `--stmo-github-table`.
 
 Rules and groups name people by Phabricator username, which is the LDAP `username` for most
-people, so that is matched first and answers without any further lookup. Failing that, the
-user is joined by email — through the `group_emails` the review groups query already returns,
-or through a reviewer target that is itself an address — and finally by email local part;
-local parts shared by several people with different accounts are ambiguous and never match.
+people, so that is matched first and answers without any further lookup. The remaining keys
+are tried in order of how much they cost:
 
-This directory takes precedence over the People Directory, which only sees the users it
-misses. It carries both the GitHub username and the numeric ID, so users it resolves get a
+1. **Email** — through the `group_emails` the review groups query already returns, or through
+   a reviewer target that is itself an address. Both `email` and `bugzilla_email` are indexed,
+   since a Phabricator account is keyed on the latter as often as the former.
+2. **Email local part** — for users neither source covers. Local parts shared by several
+   people with different accounts are ambiguous and never match.
+3. **Bugzilla account id** — from Phabricator's `bugzilla.account.search`, which the crawler
+   already calls to cross-check PMO resolutions. This is the one exact key that survives when
+   a user's Phabricator name *and* email both diverge from their LDAP ones, and it replaces
+   the People Directory's own BMO-id fallback, which only reaches an id after a fuzzy search
+   plus one profile request per candidate that search turns up.
+
+This directory takes precedence over the People Directory, which only sees the users all four
+keys miss. It carries both the GitHub username and the numeric ID, so users it resolves get a
 `username` and a `user_id`.
+
+The Bugzilla lookup needs `--conduit-token`; without one the first three keys still apply.
 `--github-user-mapping` still wins over both.
 
 ### Unattended runs
