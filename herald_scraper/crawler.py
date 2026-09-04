@@ -250,10 +250,11 @@ class HeraldCrawler:
             manual_github_mapping: Optional Phab -> GitHub username overrides
             stmo_collector: Optional StmoGroupCollector for group membership.
                 Group collection is skipped when this is None.
-            stmo_github_mapper: Optional StmoGitHubMapper. Its bulk email ->
-                GitHub login map resolves users ahead of the People Directory,
-                joined to Phabricator usernames through the group membership
-                emails stmo_collector already fetched.
+            stmo_github_mapper: Optional StmoGitHubMapper. Its bulk staff
+                directory resolves users ahead of the People Directory, matched
+                on the Phabricator username itself, then on the group membership
+                emails stmo_collector already fetched, then on the Bugzilla
+                account id conduit_client reports for the user.
             resolve_github: If True (default), run GitHub resolution. It runs even
                 without a people_client, resolving from manual_github_mapping and
                 stmo_github_mapper, and reporting everyone else as unresolved.
@@ -338,7 +339,8 @@ class HeraldCrawler:
                     "listed as unresolved"
                 )
 
-            # The join key into the STMO GitHub map: the same query that
+            # The secondary join key into the STMO GitHub map, for users whose
+            # Phabricator username is not their LDAP one: the same query that
             # produced the groups also carries their members' emails.
             user_emails = stmo_collector.fetch_user_emails() if stmo_collector else {}
 

@@ -18,7 +18,7 @@ from herald_scraper.crawler import (
 from herald_scraper.exceptions import AuthenticationError
 from herald_scraper.people_client import PeopleDirectoryClient
 from herald_scraper.resolvers import (
-    GITHUB_LOGINS_TABLE,
+    STAFF_MEMBERS_TABLE,
     REVIEW_GROUPS_TABLE,
     StmoGitHubMapper,
     StmoGroupCollector,
@@ -164,9 +164,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--stmo-github-table",
-        default=GITHUB_LOGINS_TABLE,
-        help="Workgroup membership table holding the email -> GitHub login "
-        f"mapping (default: {GITHUB_LOGINS_TABLE})",
+        default=STAFF_MEMBERS_TABLE,
+        help="Staff members table holding the GitHub username and ID "
+        f"mapping (default: {STAFF_MEMBERS_TABLE})",
     )
     parser.add_argument(
         "--stmo-query-timeout",
@@ -269,7 +269,7 @@ def main() -> int:
             stmo_collector = StmoGroupCollector(stmo_client, table=args.stmo_table)
             logger.info(f"Collecting reviewer groups from {args.stmo_table} on STMO")
             stmo_github_mapper = StmoGitHubMapper(stmo_client, table=args.stmo_github_table)
-            logger.info(f"Mapping GitHub logins from {args.stmo_github_table} on STMO")
+            logger.info(f"Mapping GitHub accounts from {args.stmo_github_table} on STMO")
 
         # Set up People Directory client for GitHub resolution (enabled by default)
         people_client = None
