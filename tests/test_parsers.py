@@ -385,6 +385,46 @@ class TestRuleDetailPageParser:
         bob = next(h for h in handles if h.name == "bob")
         assert bob.is_group is False
 
+    def test_extract_handle_info_strips_availability_indicator(self):
+        """Availability bullets must not end up in the extracted handle names."""
+        html = """
+        <html>
+        <body>
+        <div class="herald-list-item">
+            Add reviewers:
+            <a href="/p/alice/" class="phui-handle handle-availability-partial phui-link-person"><span class="perfect-circle">•</span> alice</a>,
+            <a href="/p/bob/" class="phui-handle handle-availability-disabled phui-link-person"><span class="perfect-circle">•</span> bob</a>,
+            <a href="/p/carol/" class="phui-handle phui-link-person">carol</a>
+        </div>
+        </body>
+        </html>
+        """
+        parser = RuleDetailPageParser(html)
+        div = parser.soup.find("div", class_="herald-list-item")
+
+        handles = parser._extract_handle_info(div)
+
+        assert [h.name for h in handles] == ["alice", "bob", "carol"]
+        assert all(h.is_group is False for h in handles)
+
+    def test_extract_author_strips_availability_indicator(self):
+        """The author's availability bullet must not be part of the username."""
+        html = """
+        <html>
+        <body>
+        <div class="phui-timeline-view">
+            <div class="phui-timeline-title">
+                <a href="/p/alice/" class="phui-handle handle-availability-partial phui-link-person"><span class="perfect-circle">•</span> alice</a>
+                created this object in rule H1.
+            </div>
+        </div>
+        </body>
+        </html>
+        """
+        parser = RuleDetailPageParser(html)
+
+        assert parser._extract_author() == "alice"
+
     def test_parse_action_with_user_reviewers(self):
         """Test that actions with user reviewers (not groups) set is_group correctly."""
         # HTML with user reviewers
@@ -683,6 +723,23 @@ class TestProjectPageParser:
         html = "<html><head><title>my-project · Manage</title></head><body></body></html>"
         parser = ProjectPageParser(html)
         assert parser._extract_project_name() == "my-project"
+
+    def test_extract_members_strips_availability_indicator(self):
+        """Availability bullets must not end up in timeline member names."""
+        html = """
+        <html><body>
+            <div class="phui-timeline-view">
+                <div class="phui-timeline-title">
+                    <a href="/p/alice/" class="phui-handle phui-link-person">alice</a>
+                    added a member:
+                    <a href="/p/bob/" class="phui-handle handle-availability-partial phui-link-person"><span class="perfect-circle">•</span> bob</a>.
+                </div>
+            </div>
+        </body></html>
+        """
+        parser = ProjectPageParser(html)
+
+        assert parser._extract_members() == ["bob"]
 
     def test_extract_members_no_timeline(self):
         """Test member extraction when no timeline exists."""

@@ -16,6 +16,25 @@ class HandleInfo(NamedTuple):
 
 logger = logging.getLogger(__name__)
 
+# Phabricator prefixes a handle with a coloured bullet when the person has
+# limited availability (on leave, disabled account, ...), e.g.
+# ``<a class="phui-handle handle-availability-partial">
+#   <span class="perfect-circle">•</span> alice</a>``.
+AVAILABILITY_INDICATOR_CLASS = "perfect-circle"
+
+
+def handle_text(link: Tag) -> str:
+    """Return the text of a handle link without its availability indicator.
+
+    The availability bullet is pure decoration and must not leak into scraped
+    usernames (``•alice`` instead of ``alice``).
+    """
+    return "".join(
+        text.strip()
+        for text in link.strings
+        if not text.find_parent(class_=AVAILABILITY_INDICATOR_CLASS)
+    )
+
 
 class ListingPageParser:
     """Parser for Herald rules listing page."""
@@ -223,7 +242,7 @@ class RuleDetailPageParser:
                     # Find the person link in this div
                     person_link = title_div.find("a", class_="phui-link-person")
                     if person_link:
-                        author: str = person_link.get_text(strip=True)
+                        author: str = handle_text(person_link)
                         return author
 
         # Fallback: look for any user link that created the object
@@ -233,7 +252,7 @@ class RuleDetailPageParser:
             if parent:
                 parent_text = parent.get_text(strip=True)
             if "created" in parent_text:
-                name: str = link.get_text(strip=True)
+                name: str = handle_text(link)
                 return name
 
         return "unknown"
@@ -515,7 +534,7 @@ class RuleDetailPageParser:
         handles: List[HandleInfo] = []
         for link in element.find_all("a", class_="phui-handle"):
             # Get the text of the link (e.g., "rMOZILLACENTRAL mozilla-central")
-            link_text = link.get_text(strip=True)
+            link_text = handle_text(link)
             # For repository links, extract just the readable name
             # Format is "rSHORTNAME readable-name"
             if " " in link_text:
@@ -811,7 +830,7 @@ class ProjectPageParser:
         """
         person_links = element.find_all("a", class_="phui-link-person")
         if len(person_links) >= 2:
-            member: str = person_links[1].get_text(strip=True)
+            member: str = handle_text(person_links[1])
             return member
         return None
 
