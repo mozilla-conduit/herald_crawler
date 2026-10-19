@@ -41,7 +41,6 @@ jobs:
           uv run herald-scraper \
             --url https://phabricator.services.mozilla.com \
             --stmo-api-key "${REDASH_API_KEY}" \
-            --no-resolve-github \
             --input herald_rules.orig.json \
             --output herald_rules.json
 

@@ -257,7 +257,6 @@ def main() -> int:
 
         # Set up STMO client for reviewer group membership and GitHub logins
         stmo_collector = None
-        stmo_github_mapper = None
         if args.stmo_api_key or os.environ.get("REDASH_API_KEY"):
             stmo_client = StmoClient.from_environment(
                 api_key=args.stmo_api_key,
@@ -268,23 +267,23 @@ def main() -> int:
             )
             stmo_collector = StmoGroupCollector(stmo_client, table=args.stmo_table)
             logger.info(f"Collecting reviewer groups from {args.stmo_table} on STMO")
-            stmo_github_mapper = StmoGitHubMapper(stmo_client, table=args.stmo_github_table)
-            logger.info(f"Mapping GitHub accounts from {args.stmo_github_table} on STMO")
 
-        # Set up People Directory client for GitHub resolution (enabled by default)
+        # Set up STMO or People Directory clients for GitHub resolution (enabled by default)
+        stmo_github_mapper = None
         people_client = None
         if not args.no_resolve_github:
-            pmo_cookie = args.pmo_cookie or os.environ.get("PEOPLE_MOZILLA_COOKIE")
-            if pmo_cookie:
+            if stmo_collector:
+                stmo_github_mapper = StmoGitHubMapper(stmo_client, table=args.stmo_github_table)
+                logger.info(f"Mapping GitHub accounts from {args.stmo_github_table} on STMO")
+            elif pmo_cookie := args.pmo_cookie or os.environ.get("PEOPLE_MOZILLA_COOKIE"):
                 people_client = PeopleDirectoryClient(cookie=pmo_cookie)
-                logger.info("GitHub username resolution enabled")
+                logger.info("Mapping GitHub accounts from PMO")
             else:
                 logger.warning(
-                    "No PMO cookie: GitHub usernames will only come from the STMO "
-                    "map and --github-user-mapping, and every other user will be "
-                    "reported as unresolved. Set PEOPLE_MOZILLA_COOKIE or use "
-                    "--pmo-cookie to resolve them."
+                    "No REDASH_API_KEY or PMO cookie: GitHub usernames will not be resolved."
                 )
+        else:
+                logger.info("GitHub username resolution disabled")
 
         manual_github_mapping = None
         if args.github_user_mapping:
